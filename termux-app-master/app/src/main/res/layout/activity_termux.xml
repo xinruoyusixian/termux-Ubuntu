@@ -90,7 +90,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="进入桌面" />
+                        android:text="进入桌面"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_desktop"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_restart_button"
@@ -103,7 +109,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="重启系统" />
+                        android:text="重启系统"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_restart"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_audio_button"
@@ -116,7 +128,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="音频" />
+                        android:text="音频"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_audio"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_import_button"
@@ -129,7 +147,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="导入" />
+                        android:text="导入"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_import"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -149,7 +173,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="关闭系统" />
+                        android:text="关闭系统"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_stop"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_lifecycle_button"
@@ -162,7 +192,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="随 App 关闭 ✓" />
+                        android:text="随 App 关闭 ✓"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_lifecycle"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_mountsd_button"
@@ -175,7 +211,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="挂载下载" />
+                        android:text="挂载下载"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_mount"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -195,7 +237,13 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="界面缩放 200%" />
+                        android:text="界面缩放 200%"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_scale"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
                 </LinearLayout>
 
                 <ListView

@@ -2,6 +2,11 @@ package com.termux.app;
 
 import android.content.Context;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
+
 import com.termux.BuildConfig;
 import com.termux.x11.LorieApp;
 import com.termux.shared.errors.Error;
@@ -26,6 +31,34 @@ public class TermuxApplication extends LorieApp {
 
     private static final String LOG_TAG = "TermuxApplication";
 
+    /** 自动取消注释 termux.properties 里的 allow-external-apps=true（幂等） */
+    private static void enableAllowExternalApps(Context context) {
+        try {
+            File f = new File(TermuxConstants.TERMUX_FILES_DIR_PATH + "/home/.termux/termux.properties");
+            if (!f.exists()) return;
+            List<String> lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8);
+            boolean changed = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (line.equals("# allow-external-apps = true") || line.equals("#allow-external-apps=true")) {
+                    lines.set(i, "allow-external-apps = true");
+                    changed = true;
+                    break;
+                }
+                // 已显式设为 false 的尊重用户选择，不动
+                if (line.equals("allow-external-apps = false") || line.equals("allow-external-apps=false")) {
+                    return;
+                }
+            }
+            if (changed) {
+                Files.write(f.toPath(), lines, StandardCharsets.UTF_8);
+                Logger.logInfo(LOG_TAG, "Enabled allow-external-apps in termux.properties");
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Could not enable allow-external-apps: " + e.getMessage());
+        }
+    }
+
     public void onCreate() {
         super.onCreate();
 
@@ -41,6 +74,11 @@ public class TermuxApplication extends LorieApp {
 
         // Set TermuxBootstrap.TERMUX_APP_PACKAGE_MANAGER and TermuxBootstrap.TERMUX_APP_PACKAGE_VARIANT
         TermuxBootstrap.setTermuxPackageManagerAndVariant(BuildConfig.TERMUX_PACKAGE_VARIANT);
+
+        // 让 root 模式的音频兜底可用：start-xfce.sh 用 RunCommandService 拉起 pulseaudio，
+        // Termux 默认把 allow-external-apps 注释掉，导致插件调用被拒（Error 2 通知）。
+        // 本 App 的 RUN_COMMAND 调用都是自己发给自己（启动音频），自动开启该开关。
+        enableAllowExternalApps(context);
 
         // Init app wide SharedProperties loaded from termux.properties
         TermuxAppSharedProperties properties = TermuxAppSharedProperties.init(context);

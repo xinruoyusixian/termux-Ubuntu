@@ -51,19 +51,42 @@ public final class PadMenu {
         }
     }
 
-    /** 启动 X 显示界面，并在后台把桌面栈拉起来 */
+    /**
+     * 桌面栈是否已在运行：看 X server 的 unix socket 是否存在。
+     * 从 X11 切到终端时桌面并没有关，socket 仍在 —— 此时只需把 X11 切回前台，
+     * 绝不能再跑 startDesktopStack，否则会重复拉起 X server / 出现第二个 X11 窗口。
+     */
+    private static boolean isDesktopRunning() {
+        try {
+            String x11sock = FILES_DIR + "/ubuntu/tmp/.X11-unix/X0";
+            String norootSock = "/data/data/com.termux/files/usr/tmp/.X11-unix/X0";
+            Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c",
+                    "test -S " + x11sock + " || test -S " + norootSock});
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 启动/切回 X 显示界面；桌面栈没在跑时才拉起（幂等，杜绝第二个 X11 窗口） */
     public static void openDesktop(Context ctx) {
+        boolean alreadyRunning = isDesktopRunning();
         try {
             Intent i = new Intent();
             i.setComponent(new ComponentName(ctx.getPackageName(), X11_ACTIVITY));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // singleInstance + CLEAR_TOP：复用已有 X11 窗口并切到前台，不新建第二个窗口
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             ctx.startActivity(i);
         } catch (Exception e) {
             toast(ctx, "X 显示界面启动失败：" + e.getMessage());
             return;
         }
-        toast(ctx, "正在启动 Ubuntu 桌面…");
-        startDesktopStack(ctx);
+        if (alreadyRunning) {
+            toast(ctx, "已切回 Ubuntu 桌面");
+        } else {
+            toast(ctx, "正在启动 Ubuntu 桌面…");
+            startDesktopStack(ctx);
+        }
     }
 
     /** 从 X11 桌面切回 Termux 终端界面（桌面继续在后台跑，不退出） */
