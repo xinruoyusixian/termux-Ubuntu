@@ -1,0 +1,6 @@
+load-module module-native-protocol-unix
+load-module module-native-protocol-tcp listen=127.0.0.1 port=4713 auth-anonymous=1
+# AAudio(Android 8+) 取代 sles：Android 14 上 module-sles-sink.so 会因
+# libunwindstack.so 缺少 Xzs_Construct 符号而 dlopen 失败，导致无声
+load-module module-aaudio-sink
+load-module module-always-sink

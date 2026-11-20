@@ -1,0 +1,51 @@
+// Termux:X11（lorie）作为 library 模块并入主 App。
+// 与原工程的差异：
+//   1. 不再用 hostProjects 反射探测宿主 applicationId —— 宿主固定为 com.termux
+//   2. 关闭 externalNativeBuild —— 直接使用 termux-x11 官方 release 里预编译的 libXlorie.so，
+//      避免在离线环境里编 native 代码（NDK / CMake 依赖不可控）
+//   3. Prefs.java 与 lorie_shortcuts.xml 由脚本预生成，去掉对应 gradle Task
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'com.termux.x11'
+    compileSdkVersion project.properties.compileSdkVersion.toInteger()
+
+    defaultConfig {
+        minSdkVersion project.properties.minSdkVersion.toInteger()
+        targetSdkVersion project.properties.targetSdkVersion.toInteger()
+
+        buildConfigField "String", "VERSION_NAME", "\"1.03.01-pad\""
+        buildConfigField "String", "COMMIT", "\"nongit\""
+        buildConfigField "String", "APPLICATION_ID", "\"com.termux\""
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_9
+        targetCompatibility JavaVersion.VERSION_1_9
+    }
+
+    buildFeatures {
+        aidl true
+        buildConfig true
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+}
+
+dependencies {
+    // 只声明编译期真正 import 的工件，并关闭传递依赖：
+    // 离线环境下 androidx.preference 的传递链（asynclayoutinflater 等）没有缓存，
+    // 而运行期这些库由 app 模块提供，所以 compileOnly + transitive=false 足够。
+    compileOnly("androidx.annotation:annotation:1.9.0") { transitive = false }
+    compileOnly("androidx.core:core:1.13.1") { transitive = false }
+    compileOnly("androidx.preference:preference:1.2.1") { transitive = false }
+    compileOnly("androidx.appcompat:appcompat:1.6.1") { transitive = false }
+    compileOnly("androidx.viewpager:viewpager:1.0.0") { transitive = false }
+    compileOnly("androidx.drawerlayout:drawerlayout:1.2.0") { transitive = false }
+    compileOnly("androidx.fragment:fragment:1.6.2") { transitive = false }
+    compileOnly("androidx.recyclerview:recyclerview:1.2.1") { transitive = false }
+}

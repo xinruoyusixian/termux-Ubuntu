@@ -1,0 +1,21 @@
+# 构建产物
+termux-app-master/app/build/
+termux-app-master/.gradle/
+termux-app-master/build/
+termux-app-master/.cxx/
+termux-app-master/app/.cxx/
+termux-x11-master/**/build/
+*.log
+
+# 本地配置
+termux-app-master/local.properties
+*.jks.bak
+
+# 大体积资源包（releases/ 内容单独分发，不入库）
+*.tar.gz
+*.apk
+*.bin
+
+# 系统文件
+.DS_Store
+Thumbs.db
