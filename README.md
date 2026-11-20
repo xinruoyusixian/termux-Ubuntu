@@ -29,7 +29,7 @@
 
 | 文件 | 说明 | 大小 |
 |------|------|------|
-| `Ubuntu-XFCE-平板版-v36.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
+| `Ubuntu-XFCE-Tablet-v36.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
 | `Ubuntu-XFCE-rootfs-v36.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（**不含任何个人信息**） | 815MB |
 | `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
 | `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
