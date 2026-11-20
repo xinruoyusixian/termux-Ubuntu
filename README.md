@@ -33,12 +33,13 @@
 |------|------|------|
 | `Ubuntu-XFCE-Tablet-v28.apk` | 平板版 App 最终交付包 | 48MB |
 | `Ubuntu-XFCE-rootfs.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用 | 861MB |
-| `Termux-X11.apk` | X11 显示端 | 13MB |
+| `Termux-X11.apk` | 可选：独立显示端，**仅配合原版 Termux 需要**（本 App 已内置 Lorie 显示层） | 13MB |
 | `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
 | `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
 
 ## 功能特性
 
+- **显示层内置**：X11 显示（Lorie）+ 悬浮菜单全部编译进同一个 APK，**无需另装 Termux:X11**
 - **双模式**：root 走 chroot（18 个 bind mount），非 root 走 proot 伪装，`files/.force-noroot` 标记切换
 - **终端 ↔ 桌面双向切换**：X11 悬浮菜单「终端模式」回终端；终端抽屉「进入桌面」回桌面，桌面栈后台保持
 - **完整桌面栈**：XFCE4 + fcitx5 中文输入法 + PulseAudio 音频 + Chrome 浏览器（非 root 自动挂 `--no-sandbox` shim）
@@ -47,7 +48,7 @@
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v28) 下载并安装 `Ubuntu-XFCE-Tablet-v28.apk` 与 `Termux-X11.apk`
+1. 从 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v28) 下载并安装 **`Ubuntu-XFCE-Tablet-v28.apk` 一个包即可**（X11 显示层 Lorie 已内置，不用另装显示端）
 2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs.tar.gz` 系统包
 3. 非 root 模式需先放置 `files/.force-noroot` 标记（详见 docs/使用与部署说明.md）
 
