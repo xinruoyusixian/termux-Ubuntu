@@ -14,7 +14,8 @@ export PATH=/system/bin:/system/xbin
 R=/data/data/com.termux/files/ubuntu
 FD=/data/data/com.termux/files
 XFER=$FD/download-xfer
-mkdir -p "$FD/log"; chown 10183:10183 "$FD/log" 2>/dev/null
+APP_UID=$(stat -c %u "$FD" 2>/dev/null); [ -n "$APP_UID" ] || APP_UID=10183
+mkdir -p "$FD/log"; chown "$APP_UID:$APP_UID" "$FD/log" 2>/dev/null
 LOG=$FD/log/mount-sd.log
 
 exec 2>>"$LOG"
@@ -44,7 +45,7 @@ done
 # --- 暂存区结构（App uid 可写；root 跑时修属主）---
 mkdir -p "$XFER/out" "$XFER/in" "$R/mnt/download"
 chmod -R 777 "$XFER" 2>/dev/null
-chown -R 10183:10183 "$XFER" 2>/dev/null
+chown -R "$APP_UID:$APP_UID" "$XFER" 2>/dev/null
 
 if ! ismount "$R/mnt/download"; then
   if ! mount -o bind "$XFER" "$R/mnt/download" 2>/dev/null; then
@@ -66,7 +67,7 @@ fi
 if ! pgrep -f '[d]ownload-sync.sh' >/dev/null 2>&1; then
   if [ -f "$FD/download-sync.sh" ]; then
     chmod 755 "$FD/download-sync.sh" 2>/dev/null
-    nohup su 10183 -c "sh $FD/download-sync.sh \"$XFER\" /storage/emulated/0/Download 5" \
+    nohup su "$APP_UID" -c "sh $FD/download-sync.sh \"$XFER\" /storage/emulated/0/Download 5" \
       >/dev/null 2>&1 &
     sleep 0.5
   fi

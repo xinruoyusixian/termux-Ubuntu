@@ -5,11 +5,17 @@
 # 注意：toybox 的 find 不支持 "-exec ... {} +"，必须用 -print0 | xargs -0
 R=/data/data/com.termux/files/ubuntu
 [ -d "$R/etc" ] || { echo "no rootfs"; exit 1; }
+# 当前设备 App uid（跨设备/重装会变，一律动态取，不写死 10183）
+APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=10183
+# 同步 rootfs 内 alan 账号 uid 与当前设备一致（否则 su - alan 失败 → 黑屏）
+sed -i "s/^alan:x:[0-9]*:[0-9]*:/alan:x:$APP_UID:$APP_UID:/" "$R/etc/passwd" 2>/dev/null
+sed -i "s/^alan:x:[0-9]*:/alan:x:$APP_UID:/" "$R/etc/group" 2>/dev/null
 
 echo "== 0. 必备运行时目录 =="
 # 顶层目录必须归 app 用户：tar -p 以 root 解压会把 "." 还原成 root:root，
 # 导致 App 无法写就绪标记/部署脚本（EACCES）
-chown 10183:10183 "$R" 2>/dev/null
+chown "$APP_UID:$APP_UID" "$R" 2>/dev/null
 chmod 755 "$R" 2>/dev/null
 mkdir -p "$R/tmp" "$R/tmp/.X11-unix" "$R/run" "$R/run/dbus" "$R/run/sshd" "$R/dev" "$R/dev/pts" "$R/dev/shm" "$R/proc" "$R/sys" 2>/dev/null
 chmod 1777 "$R/tmp" 2>/dev/null
@@ -44,8 +50,8 @@ for d in bin sbin lib lib64 lib32 libx32 bin.usr-is-merged sbin.usr-is-merged li
 done
 chown -R 0:0 "$R/home" 2>/dev/null
 
-echo "== 3. 用户主目录归 alan(10183) =="
-chown -R 10183:10183 "$R/home/alan" 2>/dev/null
+echo "== 3. 用户主目录归 alan($APP_UID) =="
+chown -R "$APP_UID:$APP_UID" "$R/home/alan" 2>/dev/null
 
 echo "== 4. 恢复权限位（目录 755 / 无执行位文件 644 / 可执行 755）=="
 for d in usr etc opt var boot srv media home root run data; do
@@ -97,9 +103,9 @@ echo "== 8. 修复工具与桌面图标 =="
 chmod 755 "$R"/usr/local/bin/ub-* 2>/dev/null
 chown 0:0 "$R"/usr/local/bin/ub-* 2>/dev/null
 chmod 755 "$R"/home/alan/Desktop/*.desktop 2>/dev/null
-chown 10183:10183 "$R"/home/alan/Desktop/*.desktop 2>/dev/null
+chown "$APP_UID:$APP_UID" "$R"/home/alan/Desktop/*.desktop 2>/dev/null
 mkdir -p "$R/home/alan/.runtime" 2>/dev/null
-chown -R 10183:10183 "$R/home/alan/.runtime" 2>/dev/null
+chown -R "$APP_UID:$APP_UID" "$R/home/alan/.runtime" 2>/dev/null
 chmod 700 "$R/home/alan/.runtime" 2>/dev/null
 
 echo "== 结果 =="

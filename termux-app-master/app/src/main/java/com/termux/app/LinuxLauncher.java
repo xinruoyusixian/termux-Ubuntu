@@ -743,7 +743,9 @@ public final class LinuxLauncher {
                             + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer/in "
                             + ROOTFS_DIR_PATH + "/mnt/download; " +
                     "chmod -R 777 " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer 2>/dev/null; " +
-                    "chown -R 10183:10183 " + TermuxConstants.TERMUX_FILES_DIR_PATH
+                    "APP_UID=$(stat -c %u " + TermuxConstants.TERMUX_FILES_DIR_PATH + " 2>/dev/null); "
+                            + "[ -n \"$APP_UID\" ] || APP_UID=10183; "
+                            + "chown -R \"$APP_UID:$APP_UID\" " + TermuxConstants.TERMUX_FILES_DIR_PATH
                             + "/download-xfer 2>/dev/null; " +
                     "grep -qs ' " + ROOTFS_DIR_PATH + "/mnt/download ' /proc/mounts || "
                             + "mount -o bind " + TermuxConstants.TERMUX_FILES_DIR_PATH

@@ -14,7 +14,8 @@ PIDFILE="$FILES/.linux-watchdog.pid"
 CLOSING_FLAG="$FILES/.session-closing"
 CLEANUP="$FILES/linux-cleanup.sh"
 LOG=/data/data/com.termux/files/log/watchdog.log
-mkdir -p /data/data/com.termux/files/log; chown 10183:10183 /data/data/com.termux/files/log 2>/dev/null
+APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null); [ -n "$APP_UID" ] || APP_UID=10183
+mkdir -p /data/data/com.termux/files/log; chown "$APP_UID:$APP_UID" /data/data/com.termux/files/log 2>/dev/null
 
 log() { echo "$(date '+%m-%d %H:%M:%S') $*" >> "$LOG"; }
 

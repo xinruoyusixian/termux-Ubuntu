@@ -157,14 +157,16 @@ public final class PadMenu {
     /** 只重启音频（Termux 侧 PulseAudio） */
     public static void restartAudio(Context ctx) {
         toast(ctx, "正在重启音频…");
-        // 运行时目录必须归 10183（termux）所有：以前若被 root 起过一次，
+        // 运行时目录必须归 App uid 所有：以前若被 root 起过一次，
         // .pulse-rt 会变成 root:root，之后普通身份启动会直接 EACCES 失败（表现为完全无声）。
         // 所以每次都删掉重建，别去猜里面残留了什么。
+        // uid 动态取（格式化重装/不同设备会变，不能写死 10183）。
+        int appUid = android.os.Process.myUid();
         String cmd = "pkill -x pulseaudio; sleep 1; "
                 + "rm -rf " + FILES_DIR + "/home/.pulse-rt; "
                 + "mkdir -p " + FILES_DIR + "/home/.pulse-rt; "
-                + "chown 10183:10183 " + FILES_DIR + "/home/.pulse-rt; "
-                + "su 10183 -c \"sh " + AUDIO_SCRIPT + "\"";
+                + "chown " + appUid + ":" + appUid + " " + FILES_DIR + "/home/.pulse-rt; "
+                + "su " + appUid + " -c \"sh " + AUDIO_SCRIPT + "\"";
         if (LinuxLauncher.hasRoot(ctx)) {
             runSu(ctx, cmd, "音频已重启");
         } else {

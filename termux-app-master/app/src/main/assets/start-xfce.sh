@@ -10,7 +10,10 @@ P=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 APK=$(pm path com.termux | grep -v split | head -1 | sed 's/package://')
 TH=/data/data/com.termux/files/home
 FD=/data/data/com.termux/files
-mkdir -p "$FD/log" 2>/dev/null; chown 10183:10183 "$FD/log" 2>/dev/null
+# App uid 动态获取（格式化重装后可能不是 10183）；com.termux 数据目录属主即 App uid
+APP_UID=$(stat -c %u "$FD" 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=10183
+mkdir -p "$FD/log" 2>/dev/null; chown "$APP_UID:$APP_UID" "$FD/log" 2>/dev/null
 
 # -1) 关键：App 被拉起时处在它自己的 mount namespace 里，
 #     那里 mount() 会失败（/dev、/proc 全挂不上，chroot 内 /dev/null 变成普通文件，
@@ -29,6 +32,18 @@ mount -o remount,suid /data 2>/dev/null
 if [ -f "$FD/.session-closing" ]; then
   echo "session-closing flag present, abort"
   exit 0
+fi
+
+# 0.4) uid 自适应（跨设备通用）：不同设备/格式化重装后 com.termux 的 uid 可能不同，
+#      rootfs 包里的 passwd 属主是打包设备的旧 uid → chroot 里 su - alan 切到旧 uid，
+#      与当前设备文件属主不符 → 无权访问 700 家目录和 /bin/bash → 黑屏只有光标。
+#      一律以当前设备 com.termux 数据目录的真实属主为准，把 rootfs 关键 uid 全部对齐。
+if [ -n "$APP_UID" ]; then
+  sed -i "s/^alan:x:[0-9]*:[0-9]*:/alan:x:$APP_UID:$APP_UID:/" "$R/etc/passwd" 2>/dev/null
+  sed -i "s/^alan:x:[0-9]*:/alan:x:$APP_UID:/" "$R/etc/group" 2>/dev/null
+  chown -R "$APP_UID:$APP_UID" "$R/home/alan" 2>/dev/null
+  chown "$APP_UID:$APP_UID" "$R/bin/bash" "$R/etc/passwd" "$R/etc/group" 2>/dev/null
+  echo "uid 自适应：alan=$APP_UID"
 fi
 
 # 0.5) 保证运行时目录存在（rootfs 打包时不含 /tmp，缺了 X server 无法建 socket）
@@ -88,7 +103,7 @@ ismount "$R/dev/shm" || mount -t tmpfs -o size=1g,mode=1777 tmpfs "$R/dev/shm"
 XFER=$FD/download-xfer
 mkdir -p "$XFER/out" "$XFER/in" "$R/mnt/download"
 chmod -R 777 "$XFER" 2>/dev/null
-chown -R 10183:10183 "$XFER" 2>/dev/null
+chown -R "$APP_UID:$APP_UID" "$XFER" 2>/dev/null
 ismount "$R/mnt/download" || mount -o bind "$XFER" "$R/mnt/download" 2>/dev/null
 # 桌面里的入口（alan 家目录）
 ln -sfn /mnt/download/out "$R/home/alan/下载-上传" 2>/dev/null
@@ -97,7 +112,7 @@ ln -sfn /mnt/download/in  "$R/home/alan/下载-镜像" 2>/dev/null
 if ! pgrep -f '[d]ownload-sync.sh' >/dev/null 2>&1; then
   if [ -f "$FD/download-sync.sh" ]; then
     chmod 755 "$FD/download-sync.sh" 2>/dev/null
-    nohup su 10183 -c "sh $FD/download-sync.sh \"$XFER\" /storage/emulated/0/Download 5" \
+    nohup su "$APP_UID" -c "sh $FD/download-sync.sh \"$XFER\" /storage/emulated/0/Download 5" \
       >/dev/null 2>&1 &
   fi
 fi
@@ -135,7 +150,7 @@ if [ ! -x "$TXU/bin/pulseaudio" ] && [ -f "$FD/termux-pkgs.tar.gz" ]; then
     if [ -d "$TD/data/data/com.termux/files/usr" ]; then
       # 只补缺失文件，绝不覆盖 bootstrap 自带的 bash/coreutils 等
       cp -an "$TD/data/data/com.termux/files/usr/." "$TXU/" 2>/dev/null
-      chown -R 10183:10183 "$TXU/bin" "$TXU/lib" "$TXU/etc" "$TXU/libexec" 2>/dev/null
+      chown -R "$APP_UID:$APP_UID" "$TXU/bin" "$TXU/lib" "$TXU/etc" "$TXU/libexec" 2>/dev/null
       echo "Termux 音频/API 组件已补齐"
     fi
     rm -rf "$TD"
@@ -163,7 +178,7 @@ setsid pulseaudio -n -F "$H/pa-user.pa" --log-target=file:"$LOG" \
   --exit-idle-time=-1 --disallow-exit < /dev/null > /dev/null 2>&1 &
 sleep 3
 AUDEOF
-  chown 10183:10183 "$AUD" 2>/dev/null
+  chown "$APP_UID:$APP_UID" "$AUD" 2>/dev/null
   chmod 755 "$AUD"
 fi
 # 配置文件缺失时补一份（新装设备必备）
@@ -174,10 +189,10 @@ load-module module-native-protocol-tcp listen=127.0.0.1 port=4713 auth-anonymous
 load-module module-aaudio-sink
 load-module module-always-sink
 PAEOF
-  chown 10183:10183 "$TH/pa-user.pa" 2>/dev/null
+  chown "$APP_UID:$APP_UID" "$TH/pa-user.pa" 2>/dev/null
 fi
 if ! pgrep -x pulseaudio >/dev/null 2>&1; then
-  su 10183 -c "sh $AUD" >/data/data/com.termux/files/log/audio.log 2>&1
+  su "$APP_UID" -c "sh $AUD" >/data/data/com.termux/files/log/audio.log 2>&1
   sleep 1
   if ! pgrep -x pulseaudio >/dev/null 2>&1; then
     # 兜底：借 Termux 自己的 RunCommandService 拉起
