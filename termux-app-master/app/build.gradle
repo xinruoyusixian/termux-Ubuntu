@@ -259,3 +259,38 @@ afterEvaluate {
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
     }
 }
+
+// ---- 自定义：修正 AIDL 生成文件注释里的非法 Unicode 转义 ----
+// aidl.exe 会把完整命令行写进生成文件头部注释，路径里的 \u（如 \ubuntu-xfce-tablet）
+// 会被 javac 当成非法 Unicode 转义直接报错（增量构建掩盖该问题，全量重编必炸）。
+// 这里在 AIDL 任务末尾把 " * Using: " 注释行里的反斜杠统一替换为正斜杠。
+afterEvaluate {
+    tasks.matching { it.name.contains('Aidl') || it.name.contains('AIDL') }.all { aidlTask ->
+        aidlTask.doLast {
+            def genDir = new File(project.layout.buildDirectory.get().asFile, "generated/aidl_source_output_dir")
+            if (!genDir.exists()) return
+            def n = 0
+            genDir.eachFileRecurse { f ->
+                if (f.name.endsWith('.java')) {
+                    def text = f.getText('UTF-8')
+                    def changed = false
+                    def out = new StringBuilder()
+                    text.eachLine { line ->
+                        if (line.startsWith(" * Using: ") && line.contains('\\')) {
+                            out.append(line.replace('\\', '/'))
+                            changed = true
+                        } else {
+                            out.append(line)
+                        }
+                        out.append('\n')
+                    }
+                    if (changed) {
+                        f.setText(out.toString(), 'UTF-8')
+                        n++
+                    }
+                }
+            }
+            if (n > 0) println "fixAidlUnicodeEscapes: fixed ${n} generated file(s)"
+        }
+    }
+}

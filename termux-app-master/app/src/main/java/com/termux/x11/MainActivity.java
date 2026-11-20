@@ -459,11 +459,11 @@ public class MainActivity extends AppCompatActivity {
             panel.setVisibility(View.GONE);
             new android.app.AlertDialog.Builder(this)
                     .setTitle("关闭 Ubuntu")
-                    .setMessage("会终止桌面、X server 与音频，未保存的程序会丢失。")
+                    .setMessage("会终止桌面、X server 与音频并退出 App，未保存的程序会丢失。")
                     .setNegativeButton("取消", null)
-                    .setPositiveButton("关闭", (d, w) -> {
+                    .setPositiveButton("关闭并退出", (d, w) -> {
+                        // stopDesktop 会在清理完成后统一 finishAffinity() 关掉整个 App
                         com.termux.app.PadMenu.stopDesktop(this);
-                        finish();
                     })
                     .show();
         });

@@ -629,9 +629,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             // 与 X11 悬浮菜单一致：关闭是破坏性操作，先确认
             new AlertDialog.Builder(this)
                     .setTitle("关闭 Ubuntu")
-                    .setMessage("会终止桌面、X server 与音频，未保存的程序会丢失。")
+                    .setMessage("会终止桌面、X server 与音频并退出 App，未保存的程序会丢失。")
                     .setNegativeButton("取消", null)
-                    .setPositiveButton("关闭", (d, w) -> PadMenu.stopDesktop(this))
+                    .setPositiveButton("关闭并退出", (d, w) -> PadMenu.stopDesktop(this))
                     .show();
         });
         findViewById(R.id.pad_lifecycle_button).setOnClickListener(v -> {

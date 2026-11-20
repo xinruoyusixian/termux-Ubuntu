@@ -522,6 +522,11 @@ public final class LinuxLauncher {
      * rooted device would be misdetected as non-rooted. Instead, presence of a su binary
      * (or KSU/Magisk install artifacts) is enough; the actual su call happens when the
      * chroot session starts, where the user can grant once.
+     *
+     * 2026-11-20 修订：管理器 APK 已安装 ≠ su 可用（内核不支持 / 未授权 / su 被隐藏
+     * 都会让 Termux 的 su wrapper 报 "No su program found" 直接退出，会话 code 1）。
+     * 所以「只命中管理器」时必须动态实测 su 才能判 root；静态路径命中（su 真实可见）
+     * 仍然直接判 root，授权弹窗留给会话启动时。
      */
     public static boolean hasRoot(Context ctx) {
         // 调试/逃生口：标记文件存在时强制走非 root（proot）路径，
@@ -532,32 +537,75 @@ public final class LinuxLauncher {
                 return false;
             }
         } catch (Exception ignored) {}
-        // 1) su binary visible to the app process
+        // 1) su binary visible to the app process —— 真实可见的 su，直接判 root
         String[] suPaths = {"/system/bin/su", "/system/xbin/su", "/sbin/su",
-                "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su",
-                "/data/adb/magisk", "/data/adb/ksu"};
+                "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su"};
         for (String p : suPaths) {
             try {
                 if (new File(p).exists()) {
-                    Log.i(TAG, "Root detected (su/artifact): " + p);
+                    Log.i(TAG, "Root detected (su binary): " + p);
+                    sSuManagerVerified = Boolean.TRUE;
                     return true;
                 }
             } catch (Exception ignored) {}
         }
-        // 2) KernelSU/Magisk hides su from unprivileged apps' filesystem view.
-        //    Detect the manager APK via PackageManager instead (works for normal apps).
+        // 2) 只有管理器 APK 命中时不能直接判 root —— 必须实测 su 是否真的可用
+        //    （实测会缓存到本进程生命周期，避免反复起进程）
         if (ctx != null) {
             String[] managers = {"me.weishu.kernelsu", "com.topjohnwu.magisk",
                     "io.github.vvb2060.magisk", "com.noshufou.android.su"};
+            boolean managerSeen = false;
             for (String pkg : managers) {
                 try {
                     ctx.getPackageManager().getPackageInfo(pkg, 0);
-                    Log.i(TAG, "Root detected (manager): " + pkg);
-                    return true;
+                    managerSeen = true;
+                    break;
                 } catch (Exception ignored) {}
+            }
+            if (managerSeen) {
+                if (sSuManagerVerified != null) {
+                    Log.i(TAG, "Root manager present, cached su-works=" + sSuManagerVerified);
+                    return sSuManagerVerified;
+                }
+                synchronized (SU_VERIFY_LOCK) {
+                    if (sSuManagerVerified == null) {
+                        boolean works = verifySuWorks();
+                        sSuManagerVerified = works;
+                        writeStatus("manager installed, su -c id works=" + works);
+                        Log.i(TAG, "Root manager present, live su check -> " + works);
+                    }
+                    return sSuManagerVerified;
+                }
             }
         }
         return false;
+    }
+
+    /** 管理器已装但 su 可见性未知时的动态验证（带超时；进程生命周期内缓存）。 */
+    private static final Object SU_VERIFY_LOCK = new Object();
+    private static volatile Boolean sSuManagerVerified;
+
+    private static boolean verifySuWorks() {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append('\n');
+            if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroy();
+                Log.w(TAG, "su -c id timed out, treating as non-root");
+                return false;
+            }
+            boolean ok = p.exitValue() == 0 && sb.toString().contains("uid=0");
+            Log.i(TAG, "su -c id exit=" + p.exitValue() + " out=" + sb);
+            return ok;
+        } catch (Exception e) {
+            // 找不到 su 二进制 / 无执行权限等情况：立即失败，自动降级非 root
+            Log.i(TAG, "su check failed -> non-root: " + e.getMessage());
+            return false;
+        }
     }
 
     /** 找一个真实存在的 su 二进制；KernelSU/Magisk 的路径各不相同，不要硬编码。 */
@@ -641,6 +689,11 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "mount-sd.sh", MOUNT_SD_SCRIPT); } catch (Exception e) {
                 Log.e(TAG, "copy mount-sd.sh failed", e);
             }
+            // 下载交换区搬运器（暂存区 <-> 真实 Download 双向同步，零穿透）
+            try { copyAssetIfNeeded(ctx, "download-sync.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-sync.sh"); } catch (Exception e) {
+                Log.e(TAG, "copy download-sync.sh failed", e);
+            }
             // chroot needs /dev /proc /sys mounted inside rootfs.
             String mountCmd =
                     // 清掉上次看门狗留下的「会话已关闭」标记，否则 start-xfce.sh 会直接退出
@@ -667,10 +720,34 @@ public final class LinuxLauncher {
                             ? "setsid sh " + WATCHDOG_SCRIPT + " " + android.os.Process.myPid()
                               + " >/dev/null 2>&1 & "
                             : "") +
+                    // chroot 会话挂载（与 start-xfce.sh 同一套零穿透方案）：
+                    // /dev 用独立 tmpfs + mknod（bind 真实 /dev 曾在卸载/清数据时被穿透清空）；
+                    // /mnt/download 挂交换暂存区（由 download-sync.sh 与真实 Download 同步），
+                    // 真实 /sdcard 不再被 bind，卸载/清数据穿透也删不到用户数据。
                     "mount -t proc proc " + ROOTFS_DIR_PATH + "/proc 2>/dev/null; " +
                     "mount -t sysfs sysfs " + ROOTFS_DIR_PATH + "/sys 2>/dev/null; " +
-                    "mount -o bind /dev " + ROOTFS_DIR_PATH + "/dev 2>/dev/null; " +
-                    "mount -o bind /dev/pts " + ROOTFS_DIR_PATH + "/dev/pts 2>/dev/null; " +
+                    "if ! grep -qs ' " + ROOTFS_DIR_PATH + "/dev ' /proc/mounts; then " +
+                    "if mount -t tmpfs -o mode=755 tmpfs " + ROOTFS_DIR_PATH + "/dev 2>/dev/null; then " +
+                    "mknod -m 666 " + ROOTFS_DIR_PATH + "/dev/null c 1 3 2>/dev/null; " +
+                    "mknod -m 666 " + ROOTFS_DIR_PATH + "/dev/zero c 1 5 2>/dev/null; " +
+                    "mknod -m 666 " + ROOTFS_DIR_PATH + "/dev/random c 1 8 2>/dev/null; " +
+                    "mknod -m 666 " + ROOTFS_DIR_PATH + "/dev/urandom c 1 9 2>/dev/null; " +
+                    "ln -sf /proc/self/fd " + ROOTFS_DIR_PATH + "/dev/fd 2>/dev/null; " +
+                    "ln -sf pts/ptmx " + ROOTFS_DIR_PATH + "/dev/ptmx 2>/dev/null; fi; fi; " +
+                    "[ -c " + ROOTFS_DIR_PATH + "/dev/null ] || mount -o bind /dev "
+                            + ROOTFS_DIR_PATH + "/dev 2>/dev/null; " +
+                    "grep -qs ' " + ROOTFS_DIR_PATH + "/dev/pts ' /proc/mounts || "
+                            + "mount -t devpts -o mode=600,ptmxmode=666 devpts "
+                            + ROOTFS_DIR_PATH + "/dev/pts 2>/dev/null; " +
+                    "mkdir -p " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer/out "
+                            + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer/in "
+                            + ROOTFS_DIR_PATH + "/mnt/download; " +
+                    "chmod -R 777 " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer 2>/dev/null; " +
+                    "chown -R 10183:10183 " + TermuxConstants.TERMUX_FILES_DIR_PATH
+                            + "/download-xfer 2>/dev/null; " +
+                    "grep -qs ' " + ROOTFS_DIR_PATH + "/mnt/download ' /proc/mounts || "
+                            + "mount -o bind " + TermuxConstants.TERMUX_FILES_DIR_PATH
+                            + "/download-xfer " + ROOTFS_DIR_PATH + "/mnt/download 2>/dev/null; " +
                     "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; " +
                     "export HOME=/root; export TERM=xterm-256color; " +
                     "chroot " + ROOTFS_DIR_PATH + " /bin/bash -l";
@@ -720,11 +797,15 @@ public final class LinuxLauncher {
                     // （按 pid 文件精确杀；见 chroot 分支注释，不能用 pkill -f）
                     "[ -f " + WATCHDOG_PID_FILE + " ] && kill -9 $(cat " + WATCHDOG_PID_FILE
                             + ") 2>/dev/null; rm -f " + WATCHDOG_PID_FILE + "; " +
+                    // log 目录可能被 root 会话重建为 root:root，先尝试放开；
+                    // 若仍不可写（chmod 失败）则回退到 $HOME 写日志，保证桌面照常拉起
                     "mkdir -p " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/log; " +
+                    "chmod 777 " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/log 2>/dev/null; " +
+                    "LOGDIR=" + TermuxConstants.TERMUX_FILES_DIR_PATH + "/log; " +
+                    "[ -w \"$LOGDIR\" ] || LOGDIR=$HOME; " +
                     // 后台拉起整套桌面（脚本自身幂等），前台给一个 Termux shell
-                    "sh " + deskScript + " >" + TermuxConstants.TERMUX_FILES_DIR_PATH
-                            + "/log/desktop-start.log 2>&1 & " +
-                    "echo \"Ubuntu(proot) 桌面正在后台启动，日志: files/log/desktop-start.log\"; " +
+                    "sh " + deskScript + " >\"$LOGDIR/desktop-start.log\" 2>&1 & " +
+                    "echo \"Ubuntu(proot) 桌面正在后台启动，日志: $LOGDIR/desktop-start.log\"; " +
                     "exec sh";
             writeStatus("plan=proot (non-root) + desktop autostart");
             return new LaunchPlan(false, "/system/bin/sh",

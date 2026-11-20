@@ -103,7 +103,7 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="重启" />
+                        android:text="重启系统" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/pad_audio_button"
@@ -175,7 +175,7 @@
                         android:insetBottom="2dp"
                         android:paddingHorizontal="2dp"
                         android:textSize="11sp"
-                        android:text="挂载SD" />
+                        android:text="挂载下载" />
                 </LinearLayout>
 
                 <LinearLayout

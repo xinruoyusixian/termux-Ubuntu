@@ -44,21 +44,63 @@ ismount() { grep -qs " $1 " /proc/mounts; }
 mkdir -p "$R/proc" "$R/sys" "$R/dev" "$R/dev/pts"
 ismount "$R/proc"    || mount -t proc proc "$R/proc"
 ismount "$R/sys"     || mount -t sysfs sysfs "$R/sys"
-ismount "$R/dev"     || mount -o bind /dev "$R/dev"
-ismount "$R/dev/pts" || mount -o bind /dev/pts "$R/dev/pts"
+
+# /dev 不再 bind 真实 /dev：改挂独立 tmpfs + mknod 基础节点。
+# 教训：bind 穿透删除曾把真实 /dev 内容删掉（/dev/null 事故），而且
+# App 被卸载/清数据时系统会 rm 整个数据目录 —— bind 的 /dev 会被穿透清空。
+# 独立 tmpfs 实例被穿透删除时只影响这个空实例，真实 /dev 毫发无损。
+if ! ismount "$R/dev"; then
+  if mount -t tmpfs -o mode=755 tmpfs "$R/dev" 2>/dev/null; then
+    mknod -m 666 "$R/dev/null"    c 1 3 2>/dev/null
+    mknod -m 666 "$R/dev/zero"    c 1 5 2>/dev/null
+    mknod -m 666 "$R/dev/full"    c 1 7 2>/dev/null
+    mknod -m 666 "$R/dev/random"  c 1 8 2>/dev/null
+    mknod -m 666 "$R/dev/urandom" c 1 9 2>/dev/null
+    mknod -m 666 "$R/dev/tty"     c 5 0 2>/dev/null
+    ln -sf /proc/self/fd   "$R/dev/fd"     2>/dev/null
+    ln -sf /proc/self/fd/0 "$R/dev/stdin"  2>/dev/null
+    ln -sf /proc/self/fd/1 "$R/dev/stdout" 2>/dev/null
+    ln -sf /proc/self/fd/2 "$R/dev/stderr" 2>/dev/null
+    ln -sf pts/ptmx        "$R/dev/ptmx"   2>/dev/null
+    # mknod 失败（SELinux 限制）则退回 bind —— 至少能用，但记得这有穿透风险
+    if [ ! -c "$R/dev/null" ]; then
+      umount "$R/dev" 2>/dev/null
+      mount -o bind /dev "$R/dev" 2>/dev/null
+      echo "警告：mknod 失败，/dev 退回 bind 模式"
+    fi
+  else
+    mount -o bind /dev "$R/dev" 2>/dev/null
+  fi
+fi
+# devpts 独立挂载（虚拟 FS，穿透删除无副作用），不再 bind
+ismount "$R/dev/pts" || mount -t devpts -o mode=600,ptmxmode=666 devpts "$R/dev/pts"
 mkdir -p "$R/dev/shm"
 ismount "$R/dev/shm" || mount -t tmpfs -o size=1g,mode=1777 tmpfs "$R/dev/shm"
 
-# 1.0) 兜底：若 /dev 没挂上，/dev/null 会是打包时留下的普通文件，必须清掉
-if [ ! -c "$R/dev/null" ]; then
-  bind_ok=$(mount -o bind /dev "$R/dev" 2>&1 && echo y)
-  [ "$bind_ok" = y ] || echo "警告：/dev bind 失败：$bind_ok"
-  rm -f "$R/dev/null" "$R/dev/zero" "$R/dev/random" "$R/dev/urandom" 2>/dev/null
+# 1.1) 下载交换区（零穿透设计，可写）
+# 真实 /sdcard 不再 bind 进 chroot：整卡 rw bind 曾在 App 卸载/清数据时被
+# 系统 rm 穿透挂载点删空整张 SD 卡（真实事故）。现在 chroot 内挂的是 App
+# 私有目录里的「交换暂存区」(files/download-xfer) —— 即使卸载/清数据穿透，
+# 删的也只是暂存区（本来就该清的临时区），真实 SD 卡文件零风险。
+# 暂存区与真实 /sdcard/Download 由 download-sync.sh 搬运器双向同步：
+#   mnt/download/out -> Download（桌面导出，同名自动改名）
+#   mnt/download/in  <- Download（桌面读取外部文件，5 秒刷新镜像）
+XFER=$FD/download-xfer
+mkdir -p "$XFER/out" "$XFER/in" "$R/mnt/download"
+chmod -R 777 "$XFER" 2>/dev/null
+chown -R 10183:10183 "$XFER" 2>/dev/null
+ismount "$R/mnt/download" || mount -o bind "$XFER" "$R/mnt/download" 2>/dev/null
+# 桌面里的入口（alan 家目录）
+ln -sfn /mnt/download/out "$R/home/alan/下载-上传" 2>/dev/null
+ln -sfn /mnt/download/in  "$R/home/alan/下载-镜像" 2>/dev/null
+# 搬运器没在跑就拉起（App uid 身份 —— 写 /sdcard 需要 com.termux 的存储授权）
+if ! pgrep -f '[d]ownload-sync.sh' >/dev/null 2>&1; then
+  if [ -f "$FD/download-sync.sh" ]; then
+    chmod 755 "$FD/download-sync.sh" 2>/dev/null
+    nohup su 10183 -c "sh $FD/download-sync.sh \"$XFER\" /storage/emulated/0/Download 5" \
+      >/dev/null 2>&1 &
+  fi
 fi
-
-# 1.1) SD 卡共享（与 Android 同一份文件，不是复制）
-mkdir -p "$R/mnt/sdcard"
-ismount "$R/mnt/sdcard" || mount --bind /storage/emulated/0 "$R/mnt/sdcard" 2>/dev/null
 
 # 2) X server 未运行则启动
 if ! pgrep -f "termux-x11" >/dev/null 2>&1; then
@@ -162,4 +204,4 @@ if [ -f "$FD/.session-closing" ]; then
   exit 0
 fi
 chroot "$R" /bin/bash -c "export PATH=$P HOME=/root; unset XAUTHORITY; /bin/bash /root/start-desktop.sh"
-echo "XFCE(alan) + SSH(2222) + 音频 + SD卡共享 就绪"
+echo "XFCE(alan) + SSH(2222) + 音频 + 下载交换区(可写/零穿透) 就绪"

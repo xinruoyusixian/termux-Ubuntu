@@ -23,6 +23,24 @@ export XMODIFIERS=@im=fcitx
 if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -r "$HOME/.runtime/session.env" ]; then
   . "$HOME/.runtime/session.env"
 fi
+
+# 关键自愈：强制杀进程/断电/清数据后，Chrome 会残留 SingletonLock 符号链接。
+# 该链接指向 "localhost-<pid>"，若对应进程已不存在，新启动的 Chrome 会误以为
+# 已有实例在跑，把 URL 转给那个死进程后自己静默退出 —— 表现就是"点图标没反应"。
+# 这里检测锁指向的 pid 是否还活着，是死锁就清掉三件套再启动。
+PROFILE="${HOME}/.config/google-chrome"
+if [ -L "$PROFILE/SingletonLock" ]; then
+  _t=$(readlink "$PROFILE/SingletonLock" 2>/dev/null)
+  _pid=${_t##*-}
+  case "$_pid" in
+    ''|*[!0-9]*) _alive=0 ;;
+    *) [ -d "/proc/$_pid" ] && grep -qi chrome "/proc/$_pid/comm" 2>/dev/null && _alive=1 || _alive=0 ;;
+  esac
+  if [ "$_alive" = 0 ]; then
+    rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonCookie" "$PROFILE/SingletonSocket" 2>/dev/null
+  fi
+fi
+
 exec /opt/google/chrome/chrome \
   --no-sandbox \
   --disable-gpu-sandbox \

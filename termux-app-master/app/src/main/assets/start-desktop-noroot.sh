@@ -5,6 +5,10 @@
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export DISPLAY=:0
 unset XAUTHORITY
+# Chrome/GTK 用 TMPDIR 做 POSIX 共享内存。Android 传进来的 TMPDIR 指向
+# /data/user/0/com.termux/cache（权限 2771，proot 内进程写不进 → Trace/breakpoint trap）。
+# 强制改指向 rootfs 内 1777 的 /tmp，避免共享内存崩溃且不依赖 cache 目录权限。
+export TMPDIR=/tmp
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
 
@@ -33,6 +37,20 @@ if ! pgrep -f "dbus-daemon --session" >/dev/null 2>&1; then
 fi
 printf 'export DBUS_SESSION_BUS_ADDRESS=unix:path=%s\nexport PULSE_SERVER=%s\n' "$BUS" "$PULSE" > "$SENV"
 chmod 644 "$SENV" 2>/dev/null
+
+# 2.1) 终端默认工作目录 = ~（用户家目录）。
+#      proot 会话里 HOME=/root（bind 到 /home/alan），xfdesktop 的 CWD 是 Desktop，
+#      图标启动的 xfce4-terminal 会继承它 → 终端开在桌面目录而非 ~。
+#      写 terminalrc 的 DefaultWorkingDirectory，让所有终端窗口统一从 ~ 开始。
+mkdir -p /root/.config/xfce4/terminal
+TRC=/root/.config/xfce4/terminal/terminalrc
+# xfce4-terminal 键名是 DefaultWorkingDir（配 use-default-working-dir=true）
+if [ ! -f "$TRC" ]; then
+  printf '[Configuration]\nuse-default-working-dir=true\nDefaultWorkingDir=%s\n' "/root" > "$TRC"
+else
+  grep -q '^DefaultWorkingDir=' "$TRC" || printf 'use-default-working-dir=true\nDefaultWorkingDir=%s\n' "/root" >> "$TRC"
+fi
+chmod 644 "$TRC" 2>/dev/null
 
 # 3) XFCE（伪装 root 直接跑，不切用户）
 # 注意：不用 startxfce4/xfce4-session 启动——proot 下它的会话链会导致

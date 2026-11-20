@@ -80,18 +80,30 @@ public final class PadMenu {
         }
     }
 
-    /** 关闭整套 Linux：X server + 桌面 + 音频，并卸载挂载 */
+    /**
+     * 关闭整套 Linux（X server + 桌面 + 音频 + 卸载挂载），然后关掉 App 回到安卓桌面。
+     * 清理放在后台线程；完成后切回主线程 finishAffinity() 关掉所有 Activity。
+     * 两个入口（X11 悬浮面板、终端抽屉）都只调这一个方法，关 App 逻辑集中在这里。
+     */
     public static void stopDesktop(final Context ctx) {
         toast(ctx, "正在关闭 Ubuntu…");
         new Thread(() -> {
             boolean ok = LinuxLauncher.killSession(ctx);
-            toast(ctx, ok ? "Ubuntu 已关闭" : "关闭失败，请重试");
+            toast(ctx, ok ? "Ubuntu 已关闭，正在退出…" : "关闭遇到问题，仍将退出");
+            // 关掉整个 App（所有 Activity）→ 回到安卓桌面。
+            // finishAffinity 必须在主线程调用。
+            if (ctx instanceof android.app.Activity) {
+                final android.app.Activity act = (android.app.Activity) ctx;
+                act.runOnUiThread(() -> {
+                    try { act.finishAffinity(); } catch (Exception ignored) {}
+                });
+            }
         }, "stop-desktop").start();
     }
 
-    /** 彻底重启：先杀掉 X server / 桌面 / 音频，再重新拉起 */
+    /** 重启整个系统：先彻底关闭 X server / 桌面 / 音频，再重新拉起全套 */
     public static void restartDesktop(Context ctx) {
-        toast(ctx, "正在重启桌面…");
+        toast(ctx, "正在重启 Ubuntu 系统…");
         // 注意 1：X server 是 app_process 起的，/proc/<pid>/comm 是 "main"，
         //         pkill -x termux-x11 永远匹配不到，必须按命令行匹配。
         // 注意 2：不能用 pkill -f termux-x11：这条命令行本身就含 "termux-x11"，
@@ -108,7 +120,7 @@ public final class PadMenu {
                 + "rm -f " + FILES_DIR + "/ubuntu/tmp/.X0-lock " + FILES_DIR + "/ubuntu/tmp/.X11-unix/X0; "
                 + "sleep 1; sh " + START_SCRIPT;
         if (LinuxLauncher.hasRoot(ctx)) {
-            runSu(ctx, cmd, "桌面已重启");
+            runSu(ctx, cmd, "系统已重启");
         } else {
             // 非 root：直接跑非 root 清理脚本（会连 X server 一起停），再整套拉起
             runSh(ctx, "rm -f " + FILES_DIR + "/.session-closing; "

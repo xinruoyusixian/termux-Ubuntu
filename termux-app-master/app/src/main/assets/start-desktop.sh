@@ -51,6 +51,17 @@ fi
 # 2) 会话运行时目录（必须归该用户且 700，否则 fcitx5/dbus 会报权限错）
 install -d -m 700 -o "$U" -g "$U" "$UH/.runtime"
 
+# 2.1) 终端默认工作目录 = ~（图标启动的终端会继承 xfdesktop 的 CWD，这里强制回 ~）
+install -d -m 700 -o "$U" -g "$U" "$UH/.config/xfce4/terminal"
+TRC="$UH/.config/xfce4/terminal/terminalrc"
+if [ ! -f "$TRC" ]; then
+  printf '[Configuration]\nuse-default-working-dir=true\nDefaultWorkingDir=%s\n' "$UH" > "$TRC"
+else
+  grep -q '^DefaultWorkingDir=' "$TRC" || printf 'use-default-working-dir=true\nDefaultWorkingDir=%s\n' "$UH" >> "$TRC"
+fi
+chown "$U:$U" "$TRC" 2>/dev/null
+chmod 644 "$TRC" 2>/dev/null
+
 # 3) 以普通用户启动 XFCE
 if ! pgrep -u "$U" -x xfce4-session >/dev/null 2>&1; then
   # 3.1 起一个【地址固定】的会话总线。

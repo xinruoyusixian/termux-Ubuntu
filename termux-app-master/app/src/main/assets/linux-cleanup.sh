@@ -34,6 +34,7 @@ for round in 1 2 3; do
     pkill -9 -f '[x]fconfd'           2>/dev/null
     pkill -9 -f '[f]citx5'            2>/dev/null
     pkill -9 -f '[p]ulseaudio'        2>/dev/null
+    pkill -9 -f '[d]ownload-sync.sh'  2>/dev/null
     pkill -9 -f '[d]bus-daemon'       2>/dev/null
     pkill -9 -f '[s]sh-agent'         2>/dev/null
     sleep 1
