@@ -442,11 +442,8 @@ public class MainActivity extends AppCompatActivity {
         final View panel = findViewById(R.id.pad_panel);
         if (fab == null || panel == null) return;
 
-        // 非 root：/sdcard 随桌面自动挂载，菜单里不需要「挂载 SD」
-        if (!com.termux.app.LinuxLauncher.hasRoot(this)) {
-            View msd = findViewById(R.id.pad_panel_mountsd);
-            if (msd != null) msd.setVisibility(View.GONE);
-        }
+        // 「挂载下载」root / 非 root 都保留：非 root 走 Android 存储授权，
+        // 授权后 proot 把真实 /sdcard/Download 映射到 Ubuntu 的 /mnt/download。
         findViewById(R.id.pad_panel_restart).setOnClickListener(v -> {
             panel.setVisibility(View.GONE);
             com.termux.app.PadMenu.restartDesktop(this);
@@ -474,6 +471,14 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.pad_panel_mountsd).setOnClickListener(v -> {
             panel.setVisibility(View.GONE);
             com.termux.app.PadMenu.mountSd(this);
+        });
+        findViewById(R.id.pad_panel_backup).setOnClickListener(v -> {
+            panel.setVisibility(View.GONE);
+            com.termux.app.PadMenu.backupSystem(this);
+        });
+        findViewById(R.id.pad_panel_restore).setOnClickListener(v -> {
+            panel.setVisibility(View.GONE);
+            com.termux.app.PadMenu.restoreSystem(this);
         });
         // 「终端模式」：切回 Termux 终端界面，桌面继续在后台跑，不退出
         findViewById(R.id.pad_panel_termux).setOnClickListener(v -> {

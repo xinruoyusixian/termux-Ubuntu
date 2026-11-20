@@ -218,6 +218,71 @@
                         app:iconSize="22dp"
                         app:iconPadding="2dp"
                         app:iconTint="#FFFFFF" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_mode_button"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:minWidth="0dp"
+                        android:insetTop="2dp"
+                        android:insetBottom="2dp"
+                        android:paddingHorizontal="2dp"
+                        android:textSize="11sp"
+                        android:text="模式：非root"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_mode"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
+                </LinearLayout>
+
+                <!-- 备份 / 恢复：用户自己的系统数据（含个人信息）自行保管 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="4dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_backup_button"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:minWidth="0dp"
+                        android:insetTop="2dp"
+                        android:insetBottom="2dp"
+                        android:paddingHorizontal="2dp"
+                        android:textSize="11sp"
+                        android:text="备份系统"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_import"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_restore_button"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:minWidth="0dp"
+                        android:insetTop="2dp"
+                        android:insetBottom="2dp"
+                        android:paddingHorizontal="2dp"
+                        android:textSize="11sp"
+                        android:text="恢复备份"
+                        android:minHeight="56dp"
+                        app:icon="@drawable/ic_pad_restart"
+                        app:iconGravity="textTop"
+                        app:iconSize="22dp"
+                        app:iconPadding="2dp"
+                        app:iconTint="#FFFFFF" />
                 </LinearLayout>
 
                 <LinearLayout

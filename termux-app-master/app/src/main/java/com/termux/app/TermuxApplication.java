@@ -64,6 +64,9 @@ public class TermuxApplication extends LorieApp {
 
         Context context = getApplicationContext();
 
+        // 默认非 root（proot）模式：首次安装建标记，之后尊重用户在菜单里的切换
+        LinuxLauncher.ensureDefaultMode();
+
         // Set crash handler for the app
         TermuxCrashUtils.setDefaultCrashHandler(this);
 

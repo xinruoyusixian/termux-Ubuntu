@@ -647,6 +647,45 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             getDrawer().closeDrawers();
             PadMenu.mountSd(this);
         });
+        // root / 非 root 模式切换：只改启动标记，确认后重启整套系统生效。
+        // 设备没有真正可用的 su 时（装了管理器≠su 可用）明确提示，不允许切过去。
+        findViewById(R.id.pad_mode_button).setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            final android.view.View btn = v;
+            btn.setEnabled(false);
+            // su 实测要起进程，放到子线程：主线程直接调会在授权弹窗时卡死界面（ANR）
+            new Thread(() -> {
+                final boolean toRoot = LinuxLauncher.isNonRootMode();
+                final boolean canRoot = toRoot ? LinuxLauncher.isSuAvailable() : true;
+                runOnUiThread(() -> {
+                    btn.setEnabled(true);
+                    if (!canRoot) {
+                        Logger.showToast(this, "此设备没有可用的 root，无法切换到 root 模式", true);
+                        return;
+                    }
+                    String mode = LinuxLauncher.toggleMode();
+                    if (mode.startsWith("切换失败")) {
+                        Logger.showToast(this, mode, true);
+                        return;
+                    }
+                    setPadModeButtonText();
+                    new AlertDialog.Builder(this)
+                            .setTitle("已切换到 " + mode)
+                            .setMessage("新模式会在下次启动 Ubuntu 时生效。是否立即重启系统？")
+                            .setNegativeButton("稍后", null)
+                            .setPositiveButton("立即重启", (d, w) -> PadMenu.restartDesktop(this))
+                            .show();
+                });
+            }, "check-root-for-mode").start();
+        });
+        findViewById(R.id.pad_backup_button).setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            PadMenu.backupSystem(this);
+        });
+        findViewById(R.id.pad_restore_button).setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            PadMenu.restoreSystem(this);
+        });
         findViewById(R.id.pad_scale_button).setOnClickListener(v -> {
             int next = LinuxLauncher.nextDisplayScale(LinuxLauncher.getDisplayScale(this));
             LinuxLauncher.setDisplayScale(this, next);
@@ -656,11 +695,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
         setPadLifecycleButtonText();
         setPadScaleButtonText();
-        // 非 root：/sdcard 随桌面自动挂载，「挂载SD」没有意义，直接藏掉
-        if (!LinuxLauncher.hasRoot(this)) {
-            View msd = findViewById(R.id.pad_mountsd_button);
-            if (msd != null) msd.setVisibility(View.GONE);
-        }
+        setPadModeButtonText();
+        // 「挂载下载」在 root / 非 root 下都保留：
+        // 非 root 走 Android「所有文件访问权限」授权，授权后 proot 会把真实
+        // /sdcard/Download 映射到 Ubuntu 的 /mnt/download，用于数据交换。
+    }
+
+    private void setPadModeButtonText() {
+        Button b = findViewById(R.id.pad_mode_button);
+        if (b == null) return;
+        b.setText(LinuxLauncher.isNonRootMode() ? "模式：非root" : "模式：root");
     }
 
     private void setPadScaleButtonText() {

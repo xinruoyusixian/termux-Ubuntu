@@ -18,10 +18,18 @@ pkill -f chrome_crashpad 2>/dev/null
 pkill -x dbus-daemon 2>/dev/null
 sleep 2
 
-echo "== 2. Chrome 用户数据（root 与 alan 两份测试 profile）=="
-rm -rf "$R/root/.config/google-chrome"
-rm -rf "$R/home/alan/.config/google-chrome"
-rm -rf "$R/home/alan/.cache/google-chrome"
+echo "== 2. Chrome 用户数据（发布包绝不能带个人浏览记录/Cookie/密码/会话）=="
+# 整个 profile 删除，不是只删 Cache —— Local State / Default/History / Cookies /
+# Login Data / Preferences 里都有个人信息，Chrome 下次启动会自建干净 profile。
+rm -rf "$R/root/.config/google-chrome" "$R/root/.cache/google-chrome"
+rm -rf "$R/home/alan/.config/google-chrome" "$R/home/alan/.cache/google-chrome"
+# 历次调试留下的临时 profile 目录，一并清掉
+rm -rf "$R/root/.config"/chrome-clean "$R/root/.config"/chrome-fresh-* 2>/dev/null
+rm -rf "$R/home/alan/.config"/chrome-clean "$R/home/alan/.config"/chrome-fresh-* 2>/dev/null
+rm -rf "$R/root/.config/chromium" "$R/root/.cache/chromium"
+rm -rf "$R/home/alan/.config/chromium" "$R/home/alan/.cache/chromium"
+# 最近打开的文件列表也属于个人痕迹
+rm -f "$R/home/alan/.local/share/recently-used.xbel" "$R/root/.local/share/recently-used.xbel" 2>/dev/null
 
 echo "== 3. 已弃用浏览器的缓存 =="
 rm -rf "$R/home/alan/.cache/netsurf" "$R/home/alan/.cache/epiphany"

@@ -104,23 +104,37 @@ public final class PadMenu {
     }
 
     /**
-     * 关闭整套 Linux（X server + 桌面 + 音频 + 卸载挂载），然后关掉 App 回到安卓桌面。
-     * 清理放在后台线程；完成后切回主线程 finishAffinity() 关掉所有 Activity。
-     * 两个入口（X11 悬浮面板、终端抽屉）都只调这一个方法，关 App 逻辑集中在这里。
+     * 关闭整套 Linux（X server + 桌面 + 音频 + 卸载挂载），然后彻底杀掉 App 回到安卓桌面。
+     * 清理在后台线程；完成后停前台服务、finish 所有 Activity、最后 killProcess 确保进程退出
+     * （只 finishAffinity 不够：TermuxService 前台服务会让进程残留）。
+     * 两个入口（X11 悬浮面板、终端抽屉）都只调这一个方法。
      */
     public static void stopDesktop(final Context ctx) {
         toast(ctx, "正在关闭 Ubuntu…");
         new Thread(() -> {
             boolean ok = LinuxLauncher.killSession(ctx);
             toast(ctx, ok ? "Ubuntu 已关闭，正在退出…" : "关闭遇到问题，仍将退出");
-            // 关掉整个 App（所有 Activity）→ 回到安卓桌面。
-            // finishAffinity 必须在主线程调用。
-            if (ctx instanceof android.app.Activity) {
-                final android.app.Activity act = (android.app.Activity) ctx;
-                act.runOnUiThread(() -> {
+            final android.app.Activity act = (ctx instanceof android.app.Activity)
+                    ? (android.app.Activity) ctx : null;
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                // 1) 停掉 Termux 前台服务（否则进程不会真正退出）
+                try {
+                    Intent svc = new Intent(ctx, com.termux.app.TermuxService.class);
+                    svc.setAction("com.termux.service_stop");
+                    ctx.startService(svc);
+                } catch (Exception ignored) {}
+                try { ctx.stopService(new Intent(ctx, com.termux.app.TermuxService.class)); }
+                catch (Exception ignored) {}
+                // 2) 关掉所有 Activity
+                if (act != null) {
                     try { act.finishAffinity(); } catch (Exception ignored) {}
-                });
-            }
+                }
+                // 3) 延迟杀进程，确保 finish/服务停止已执行
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                    System.exit(0);
+                }, 300);
+            }, 400);
         }, "stop-desktop").start();
     }
 
@@ -181,18 +195,20 @@ public final class PadMenu {
     /**
      * 菜单「挂载 SD」。
      *
-     * 桌面里点不了这件事：存储权限是 App 侧的，chroot 内的 alan 与 com.termux
-     * 同 uid(10183)，没这个权限桌面里就是一个打不开的空目录。
-     * 所以：没权限先解释清楚并把人送到系统设置页；有权限就直接挂。
+     * 存储权限是 App 侧的：Linux 侧（root chroot 或 proot）与 com.termux 共用
+     * 内核 uid，没这个权限桌面里就是一个打不开的空目录。
+     * 所以：没权限先解释清楚并把人送到系统设置页；有权限就直接挂/校验。
      */
     public static void mountSd(final android.app.Activity act) {
         if (!LinuxLauncher.hasStorageAccess(act)) {
             sPendingMount = true;
             new AlertDialog.Builder(act)
                     .setTitle("需要存储权限")
-                    .setMessage("Ubuntu 桌面里的用户和本应用共用同一个系统身份。\n"
-                            + "没有「所有文件访问」权限时，桌面里打不开平板上的文件，也看不到 SD 卡。\n\n"
-                            + "点「去授权」打开系统设置，把「允许访问所有文件」打开，返回后会自动完成挂载。")
+                    .setMessage("Ubuntu 需要与平板交换 Download 里的文件。\n"
+                            + "Linux 侧和本应用共用同一个系统身份，没有「所有文件访问」权限时，"
+                            + "桌面里打不开下载目录。\n\n"
+                            + "点「去授权」打开系统设置，把「允许访问所有文件」打开，返回后会自动完成挂载。"
+                            + "root 和非 root 模式使用同一套授权。")
                     .setNegativeButton("取消", (d, w) -> sPendingMount = false)
                     .setPositiveButton("去授权", (d, w) -> LinuxLauncher.openStorageSettings(act))
                     .show();
@@ -218,6 +234,72 @@ public final class PadMenu {
             String r = LinuxLauncher.mountStorage(act);
             toast(act, r);
         }, "mount-sd").start();
+    }
+
+    /**
+     * 备份当前系统：把整个 ubuntu 目录（含用户个人信息）打到 /sdcard。
+     * 与发布包相反 —— 这是用户主动备份，个人数据原样保留。
+     * 备份会先停掉桌面进程，需提醒用户；耗时较长，放子线程。
+     */
+    public static void backupSystem(final android.app.Activity act) {
+        new AlertDialog.Builder(act)
+                .setTitle("备份当前系统")
+                .setMessage("会把当前整套 Ubuntu 系统打包保存到：\n\n"
+                        + LinuxLauncher.BACKUP_DIR + "/\n\n"
+                        + "包含你的全部个人数据（浏览器记录、登录、文档、输入法词库等），"
+                        + "请妥善保管这个包。\n\n"
+                        + "备份前会先关闭正在运行的桌面程序，备份可能需要几分钟。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("开始备份", (d, w) -> {
+                    toast(act, "正在备份，请耐心等待…");
+                    new Thread(() -> {
+                        String r = LinuxLauncher.backupSystem(act);
+                        toast(act, r);
+                    }, "backup-system").start();
+                })
+                .show();
+    }
+
+    /** 从用户自己的备份包恢复系统（含其个人信息） */
+    public static void restoreSystem(final android.app.Activity act) {
+        final File[] pkgs = LinuxLauncher.findBackupPackages();
+        if (pkgs == null || pkgs.length == 0) {
+            new AlertDialog.Builder(act)
+                    .setTitle("未找到备份包")
+                    .setMessage("请把备份包（.tar.gz）放到以下目录后重试：\n\n"
+                            + LinuxLauncher.BACKUP_DIR + "/\n"
+                            + "/sdcard/Download/\n\n"
+                            + "备份包文件名类似 ubuntu-backup-20261121-023000.tar.gz。")
+                    .setPositiveButton("知道了", null)
+                    .show();
+            return;
+        }
+        CharSequence[] names = new CharSequence[pkgs.length];
+        for (int i = 0; i < pkgs.length; i++) {
+            names[i] = pkgs[i].getName() + "  (" + pkgs[i].length() / 1024 / 1024 + " MB)";
+        }
+        new AlertDialog.Builder(act)
+                .setTitle("选择要恢复的备份")
+                .setMessage("恢复会先关闭桌面并清空当前系统，再用所选备份覆盖。"
+                        + "当前系统里未备份的改动会丢失。")
+                .setItems(names, (d, which) -> {
+                    final File chosen = pkgs[which];
+                    new AlertDialog.Builder(act)
+                            .setTitle("确认恢复")
+                            .setMessage("确定从\n" + chosen.getName() + "\n恢复吗？\n\n"
+                                    + "这会清空当前系统并覆盖，耗时数分钟，期间请勿关闭应用。")
+                            .setNegativeButton("取消", null)
+                            .setPositiveButton("确认恢复", (d2, w2) -> {
+                                toast(act, "正在恢复，请耐心等待…");
+                                new Thread(() -> {
+                                    String r = LinuxLauncher.restoreSystem(act, chosen);
+                                    toast(act, r.startsWith("OK:") ? r.substring(3) : r);
+                                }, "restore-system").start();
+                            })
+                            .show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /** 重新导入系统包：清空已解压的系统并从 /sdcard 重新解压 */

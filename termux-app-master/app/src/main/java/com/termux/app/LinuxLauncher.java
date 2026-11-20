@@ -92,11 +92,99 @@ public final class LinuxLauncher {
             TermuxConstants.TERMUX_FILES_DIR_PATH + "/start-desktop-noroot.sh";
     public static final String NOROOT_CLEANUP_SCRIPT =
             TermuxConstants.TERMUX_FILES_DIR_PATH + "/linux-cleanup-noroot.sh";
-    /** 调试/逃生口：files 目录下放这个标记文件，即使在有 root 的机器上也强制走非 root 路径 */
+    /** 标记文件：存在时强制走非 root（proot）路径。默认模式，可由菜单切换 */
     public static final String FORCE_NOROOT_FLAG =
             TermuxConstants.TERMUX_FILES_DIR_PATH + "/.force-noroot";
+    /** 模式已初始化标记：确保「默认非 root」只在首次安装设置一次，不覆盖用户后续切换 */
+    private static final String MODE_INITIALIZED_FLAG =
+            TermuxConstants.TERMUX_FILES_DIR_PATH + "/.mode-initialized";
 
     private LinuxLauncher() {}
+
+    /** 首次启动默认非 root：建 .force-noroot 标记（只做一次，尊重用户后续切换） */
+    public static void ensureDefaultMode() {
+        try {
+            File init = new File(MODE_INITIALIZED_FLAG);
+            if (init.exists()) return;
+            File flag = new File(FORCE_NOROOT_FLAG);
+            // 必须在标记确实存在后才写「已初始化」，否则一旦创建失败
+            // 就再也不会重试，卡在「已初始化但非默认模式」的不一致状态。
+            boolean ok = flag.exists() || flag.createNewFile();
+            if (!ok && !flag.exists()) {
+                Log.w(TAG, "ensureDefaultMode: cannot create force-noroot flag");
+                return;
+            }
+            init.createNewFile();
+            Log.i(TAG, "default mode = non-root (proot)");
+        } catch (Exception e) {
+            Log.w(TAG, "ensureDefaultMode failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 设备是否真的有可用 root（不看 .force-noroot 标记，直接实测 su）。
+     * 供菜单切换模式时判断：没 root 就提示无法切到 root 模式。
+     */
+    /** 实测确认可用的 su 路径（避免检测用一个、执行用另一个） */
+    private static volatile String sWorkingSuPath;
+
+    /** su 候选路径：KernelSU / Magisk / 系统合并位置都覆盖 */
+    private static final String[] SU_PATHS = {"/system/bin/su", "/system/xbin/su", "/sbin/su",
+            "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su", "/data/adb/magisk/su"};
+
+    /**
+     * 设备是否真的有可用 root（不看 .force-noroot 标记，直接实测）。
+     * 遍历所有 su 候选路径，任一实测 `su -c id` 返回 uid=0 即算可用；
+     * 只有管理器 APK 或残留 su 文件都不算（装了 KernelSU≠su 可用）。
+     * 供菜单切换模式、备份/恢复选执行身份时判断。
+     */
+    public static boolean isSuAvailable() {
+        // 先试已确认可用的路径，避免每次重新探测全部路径
+        String cached = sWorkingSuPath;
+        if (cached != null && verifySuWorks(cached)) return true;
+        for (String p : SU_PATHS) {
+            if (!new File(p).exists()) continue;
+            if (verifySuWorks(p)) {
+                sWorkingSuPath = p;
+                return true;
+            }
+        }
+        // PATH 里也可能有 su（Magisk 合并进 /system/bin）
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "command -v su"});
+            String out = readAll(p.getInputStream());
+            p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+            String fromPath = out.trim().split("\n")[0].trim();
+            if (!fromPath.isEmpty() && verifySuWorks(fromPath)) {
+                sWorkingSuPath = fromPath;
+                return true;
+            }
+        } catch (Exception ignored) {}
+        sWorkingSuPath = null;
+        return false;
+    }
+
+    /** 当前是否为非 root 模式（读标记） */
+    public static boolean isNonRootMode() {
+        return new File(FORCE_NOROOT_FLAG).exists();
+    }
+
+    /** 切换运行模式：返回切换后的模式描述（"非 root（proot）" / "root（chroot）"） */
+    public static String toggleMode() {
+        File flag = new File(FORCE_NOROOT_FLAG);
+        if (flag.exists()) {
+            if (!deleteQuiet(flag)) return "切换失败：无法删除标记";
+            // 不删 MODE_INITIALIZED_FLAG：用户切换后重启要保持不变
+            return "root（chroot）";
+        } else {
+            try { flag.createNewFile(); } catch (Exception e) { return "切换失败：" + e.getMessage(); }
+            return "非 root（proot）";
+        }
+    }
+
+    private static boolean deleteQuiet(File f) {
+        try { return f.delete(); } catch (Exception e) { return false; }
+    }
 
     /**
      * 「系统跟随 App 关闭」开关。
@@ -289,9 +377,9 @@ public final class LinuxLauncher {
     /**
      * 是否已拿到「访问全部文件」的权限。
      *
-     * 这个权限不是给 App 自己用的：chroot 里的 alan 与 com.termux 共用内核 uid
-     * (10183)，Android 存储按 uid 判权限，所以没有它，桌面里就打不开
-     * /mnt/sdcard —— 目录在、点进去是空的或者 Permission denied。
+     * Linux 侧（root 的 chroot 或 proot）与 com.termux 共用同一个内核 uid，
+     * Android 存储按 uid 判权限，所以没有它，桌面里就打不开挂载的下载目录 ——
+     * 目录在、点进去是空的或者 Permission denied。
      */
     public static boolean hasStorageAccess(Context ctx) {
         if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -340,11 +428,19 @@ public final class LinuxLauncher {
      * @return 可直接展示给用户的中文结果
      */
     public static String mountStorage(Context ctx) {
-        // 非 root：proot 启动脚本已把 /sdcard bind 进桌面，无需（也无法）额外挂载
+        // 非 root（proot）：不能 mount --bind，但 App 拿到 Android「所有文件访问」权限后，
+        // proot 启动脚本 -b /sdcard/Download:/mnt/download 直接映射真实下载目录。
+        // 这里做一次真实可读写校验，避免「已授权但目录还是空/只读」的假成功。
         if (!hasRoot(ctx)) {
-            return hasStorageAccess(ctx)
-                    ? "非 root 模式：/sdcard 已随桌面自动挂载"
-                    : "系统仍拒绝访问存储，请确认「所有文件访问权限」已打开";
+            if (!hasStorageAccess(ctx)) {
+                return "系统仍拒绝访问存储，请确认「所有文件访问权限」已打开";
+            }
+            File dl = new File("/sdcard/Download");
+            boolean ok = dl.isDirectory() && dl.canRead() && dl.canWrite();
+            writeStatus("non-root download access=" + ok);
+            return ok
+                    ? "已授权：下载目录可读写，桌面里位于 /mnt/download"
+                    : "已授权，但 /sdcard/Download 暂不可写，请确认系统授权已生效";
         }
         try {
             copyAssetIfNeeded(ctx, "mount-sd.sh", MOUNT_SD_SCRIPT);
@@ -423,6 +519,101 @@ public final class LinuxLauncher {
             } catch (Exception ignored) {}
         }
         return null;
+    }
+
+    public static final String BACKUP_SCRIPT =
+            TermuxConstants.TERMUX_FILES_DIR_PATH + "/backup-rootfs.sh";
+    public static final String RESTORE_SCRIPT =
+            TermuxConstants.TERMUX_FILES_DIR_PATH + "/restore-rootfs.sh";
+    public static final String BACKUP_DIR = "/sdcard/UbuntuXFCE/backups";
+
+    /**
+     * 备份当前系统（含用户个人信息）到 /sdcard/UbuntuXFCE/backups。
+     * 必须在子线程调用；root/非 root 都以能读写 rootfs 的身份执行。
+     * 结果以 RESULT OK/ERR 开头返回，供菜单 toast 展示。
+     */
+    public static String backupSystem(Context ctx) {
+        if (!isRootfsReady()) return "系统未安装，无需备份";
+        try {
+            copyAssetIfNeeded(ctx, "backup-rootfs.sh", BACKUP_SCRIPT);
+        } catch (Exception e) {
+            return "备份脚本写入失败：" + e.getMessage();
+        }
+        // 执行身份看「设备能否真正拿到 root」，不看当前模式标记：
+        // 用户从 root 切到非 root 模式后，rootfs 里 /usr /root 等仍是 root:root 700，
+        // 以 App uid 备份会大量 EACCES 跳过文件，生成残缺包却误报成功。
+        // 只要设备有可用 su，就一律用 root 打包，保证完整。
+        boolean rooted = isSuAvailable();
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{
+                    rooted ? suBinary() : "/system/bin/sh", "-c", "sh " + BACKUP_SCRIPT});
+            String out = readAll(p.getInputStream()) + readAll(p.getErrorStream());
+            boolean done = p.waitFor(900, TimeUnit.SECONDS);
+            if (!done) { p.destroy(); return "备份超时（超过 15 分钟），请查看 files/log/backup.log"; }
+            writeStatus("backup " + out.trim());
+            for (String raw : out.split("\n")) {
+                String line = raw.trim();
+                if (line.startsWith("RESULT OK")) return line.substring("RESULT OK".length()).trim();
+                if (line.startsWith("RESULT ERR")) return "备份失败：" + line.substring("RESULT ERR".length()).trim();
+            }
+            return "备份失败（无返回结果，详见 files/log/backup.log）";
+        } catch (Exception e) {
+            Log.e(TAG, "backup failed", e);
+            return "备份失败：" + e.getMessage();
+        }
+    }
+
+    /** 列出可恢复的备份包：备份目录优先，其次 Download 里的 ubuntu-backup-*.tar.gz */
+    public static File[] findBackupPackages() {
+        java.util.List<File> list = new java.util.ArrayList<>();
+        String[] dirs = {BACKUP_DIR, "/sdcard/Download"};
+        for (String d : dirs) {
+            File dir = new File(d);
+            File[] fs = dir.listFiles((dir1, name) ->
+                    (name.startsWith("ubuntu-backup-") || name.startsWith("rootfs-"))
+                            && name.endsWith(".tar.gz"));
+            if (fs != null) {
+                java.util.Arrays.sort(fs, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                java.util.Collections.addAll(list, fs);
+            }
+        }
+        return list.toArray(new File[0]);
+    }
+
+    /** 从指定备份包恢复系统（含用户个人信息）。必须在子线程调用。 */
+    public static String restoreSystem(Context ctx, File pkg) {
+        if (pkg == null || !pkg.isFile()) return "备份包不存在";
+        try {
+            copyAssetIfNeeded(ctx, "restore-rootfs.sh", RESTORE_SCRIPT);
+            copyAssetIfNeeded(ctx, "fix_perms.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/fix_perms.sh");
+        } catch (Exception e) {
+            return "恢复脚本写入失败：" + e.getMessage();
+        }
+        // 同备份：用设备真实 root 能力恢复，rootfs 的属主/setuid 需要 root 才能还原。
+        // 用 ProcessBuilder 数组传参，避免文件名含单引号时把 shell 命令拼坏（L1）。
+        boolean rooted = isSuAvailable();
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    rooted ? suBinary() : "/system/bin/sh",
+                    "-c", "sh " + RESTORE_SCRIPT + " \"$1\"", "sh",
+                    pkg.getAbsolutePath());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String out = readAll(p.getInputStream()) + readAll(p.getErrorStream());
+            boolean done = p.waitFor(900, TimeUnit.SECONDS);
+            if (!done) { p.destroy(); return "恢复超时（超过 15 分钟），请查看 files/log/restore.log"; }
+            writeStatus("restore " + out.trim());
+            for (String raw : out.split("\n")) {
+                String line = raw.trim();
+                if (line.startsWith("RESULT OK")) return "OK:" + line.substring("RESULT OK".length()).trim();
+                if (line.startsWith("RESULT ERR")) return "恢复失败：" + line.substring("RESULT ERR".length()).trim();
+            }
+            return "恢复失败（无返回结果，详见 files/log/restore.log）";
+        } catch (Exception e) {
+            Log.e(TAG, "restore failed", e);
+            return "恢复失败：" + e.getMessage();
+        }
     }
 
     /** 系统是否已就绪：探测 rootfs 里必然存在的文件，而不是依赖自己写的标记 */
@@ -537,15 +728,25 @@ public final class LinuxLauncher {
                 return false;
             }
         } catch (Exception ignored) {}
-        // 1) su binary visible to the app process —— 真实可见的 su，直接判 root
+        // 1) su binary visible to the app process —— 必须实测能用才算 root。
+        //    以前只看文件存在，KernelSU 装了但 su 被删/没授权时仍判有 root，
+        //    随后 chroot 命令报 "No su program found on this device..."。
         String[] suPaths = {"/system/bin/su", "/system/xbin/su", "/sbin/su",
                 "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su"};
         for (String p : suPaths) {
             try {
                 if (new File(p).exists()) {
-                    Log.i(TAG, "Root detected (su binary): " + p);
-                    sSuManagerVerified = Boolean.TRUE;
-                    return true;
+                    if (sSuManagerVerified == null) {
+                        synchronized (SU_VERIFY_LOCK) {
+                            if (sSuManagerVerified == null) {
+                                boolean works = verifySuWorks(p);
+                                sSuManagerVerified = works;
+                                Log.i(TAG, "su binary " + p + " live check -> " + works);
+                                writeStatus("su binary " + p + " works=" + works);
+                            }
+                        }
+                    }
+                    return sSuManagerVerified;
                 }
             } catch (Exception ignored) {}
         }
@@ -586,23 +787,31 @@ public final class LinuxLauncher {
     private static volatile Boolean sSuManagerVerified;
 
     private static boolean verifySuWorks() {
+        return verifySuWorks("su");
+    }
+
+    /**
+     * 用指定路径实测 su。
+     * 关键顺序：先 waitFor(超时) 再读流。若 su 弹出授权框挂起等待用户操作，
+     * 子进程存活、stdout 不关闭，先 readLine() 会永久阻塞（曾经卡死 UI 的 bug），
+     * 导致 5 秒超时形同虚设。这里先等进程结束，超时就强杀，之后再读残留输出。
+     */
+    private static boolean verifySuWorks(String suBin) {
+        Process p = null;
         try {
-            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
-            java.io.BufferedReader r = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(p.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = r.readLine()) != null) sb.append(line).append('\n');
-            if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroy();
-                Log.w(TAG, "su -c id timed out, treating as non-root");
+            p = Runtime.getRuntime().exec(new String[]{suBin, "-c", "id"});
+            boolean done = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (!done) {
+                p.destroyForcibly();
+                Log.w(TAG, "su -c id timed out (授权弹窗未处理?), treating as non-root: " + suBin);
                 return false;
             }
-            boolean ok = p.exitValue() == 0 && sb.toString().contains("uid=0");
-            Log.i(TAG, "su -c id exit=" + p.exitValue() + " out=" + sb);
+            String out = readAll(p.getInputStream());
+            boolean ok = p.exitValue() == 0 && out.contains("uid=0");
+            Log.i(TAG, "su -c id exit=" + p.exitValue() + " path=" + suBin + " out=" + out.trim());
             return ok;
         } catch (Exception e) {
-            // 找不到 su 二进制 / 无执行权限等情况：立即失败，自动降级非 root
+            if (p != null) p.destroyForcibly();
             Log.i(TAG, "su check failed -> non-root: " + e.getMessage());
             return false;
         }
@@ -610,9 +819,10 @@ public final class LinuxLauncher {
 
     /** 找一个真实存在的 su 二进制；KernelSU/Magisk 的路径各不相同，不要硬编码。 */
     public static String suBinary() {
-        String[] paths = {"/system/bin/su", "/system/xbin/su", "/sbin/su",
-                "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su"};
-        for (String p : paths) {
+        // 优先用实测确认可用的路径，避免「检测用一个、执行用另一个」
+        String working = sWorkingSuPath;
+        if (working != null) return working;
+        for (String p : SU_PATHS) {
             try {
                 if (new File(p).exists()) return p;
             } catch (Exception ignored) {}
