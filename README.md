@@ -13,12 +13,7 @@
 │   ├── Ubuntu chroot 使用说明.md  原始使用文档
 │   ├── 源码改动说明.md            相对上游 Termux 的全部改动 + 构建方法
 │   └── 踩坑记录/                 11 个主题文件（SELinux/proot/X11/音频/输入法…）
-├── releases/                 资源包（安装即用）
-│   ├── Ubuntu-XFCE-平板版-v28.apk   最终交付版 App（48MB）
-│   ├── Termux-X11-显示端.apk        X11 显示端
-│   ├── termux-pkgs.tar.gz           Termux 基础包（proot 运行环境）
-│   ├── termux-app_v0.118.3_arm64.apk 原版 Termux（初始化用）
-│   └── Ubuntu-XFCE-rootfs.tar.gz    Ubuntu 系统包（902MB，导入用）
+├── releases/                 资源包（安装即用，见下方「下载」；二进制不入 git）
 ├── termux-app-master/        主工程源码（相对上游改动见 docs/源码改动说明.md）
 ├── termux-x11-master/        X11 参考源码
 └── tools/                    打包与部署辅助脚本
@@ -30,6 +25,18 @@
     └── enter-ubuntu.sh / 进入Ubuntu.bat   手动进入 Ubuntu
 ```
 
+## 下载
+
+资源包（App、系统包、显示端）体积大，不放进 git，统一发布在 **[Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v28)**：
+
+| 文件 | 说明 | 大小 |
+|------|------|------|
+| `Ubuntu-XFCE-Tablet-v28.apk` | 平板版 App 最终交付包 | 48MB |
+| `Ubuntu-XFCE-rootfs.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用 | 861MB |
+| `Termux-X11.apk` | X11 显示端 | 13MB |
+| `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
+| `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
+
 ## 功能特性
 
 - **双模式**：root 走 chroot（18 个 bind mount），非 root 走 proot 伪装，`files/.force-noroot` 标记切换
@@ -40,8 +47,8 @@
 
 ## 快速开始
 
-1. 安装 `releases/Ubuntu-XFCE-平板版-v28.apk` 与 `releases/Termux-X11-显示端.apk`
-2. 首次启动按提示导入 `releases/Ubuntu-XFCE-rootfs.tar.gz` 系统包
+1. 从 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v28) 下载并安装 `Ubuntu-XFCE-Tablet-v28.apk` 与 `Termux-X11.apk`
+2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs.tar.gz` 系统包
 3. 非 root 模式需先放置 `files/.force-noroot` 标记（详见 docs/使用与部署说明.md）
 
 详细步骤、菜单说明、常见问题见 **[docs/使用与部署说明.md](docs/使用与部署说明.md)**。
