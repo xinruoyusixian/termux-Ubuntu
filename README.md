@@ -31,13 +31,25 @@
 
 资源包体积大，不进 git，统一发布在 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v42)：
 
-| 文件 | 说明 | 大小 |
-|------|------|------|
-| `Ubuntu-XFCE-Tablet-v42.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 47MB |
-| `Ubuntu-XFCE-rootfs-v42.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（内置桌面图标/默认浏览器/输入法入口/中英切换按钮，已清理个人信息） | 861MB |
-| `Ubuntu-XFCE-source-v42.tar.gz` | v42 源码（源码+文档+工具，排除构建产物与 .git） | 58MB |
-| `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
-| `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
+| 文件 | 普通用户 | 说明 | 大小 |
+|------|---------|------|------|
+| `Ubuntu-XFCE-Tablet-v42.apk` | **必需（装）** | 平板版 App，含 X11 显示层，装这一个即可 | 47MB |
+| `Ubuntu-XFCE-rootfs-v42.tar.gz` | **必需（导入）** | Ubuntu 系统包，首次启动解压出整个系统 | 861MB |
+| `Ubuntu-XFCE-source-v42.tar.gz` | 不需要 | 源码 + 文档 + 工具，给想改代码/自己重编的人；**不参与运行，也不用导入** | 58MB |
+| `termux-pkgs.tar.gz` | 不需要 | Termux 基础包，仅配合原版 Termux 时使用 | 11MB |
+| `termux-app-0.118.3-arm64.apk` | 不需要 | 原版 Termux，仅初始化参考 | 9MB |
+
+> **普通用户只需要上面两个标「必需」的文件**：`APK` 装上，`rootfs` 放好位置让 App 导入。
+> `source` 是源码存档，导入流程完全不会用到它，不用管。
+>
+> **rootfs 放哪里**：文件名要改成 `rootfs.tar.gz`（去掉版本号），放到下面任一位置：
+>
+> ```
+> /sdcard/UbuntuXFCE/rootfs.tar.gz     ← 推荐
+> /sdcard/Download/rootfs.tar.gz       ← 也可以
+> ```
+>
+> 放好后打开 App，按提示点「去授权」打开「所有文件访问」，返回即自动开始解压（900MB，约 5~15 分钟，期间别关应用）。
 
 > **不需要单独安装 Termux:X11**：显示层（Lorie）已内置在 APK 里。`Termux-X11.apk` 仅在配合原版 Termux 时才需要。
 >
@@ -72,7 +84,8 @@
 ## 快速开始
 
 1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v42.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v42.apk`，一个包即可）
-2. 把 `Ubuntu-XFCE-rootfs-v42.tar.gz` 放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz`，然后打开 App
+2. 把 `Ubuntu-XFCE-rootfs-v42.tar.gz` **重命名为 `rootfs.tar.gz`**，放到 `/sdcard/UbuntuXFCE/`（或 `/sdcard/Download/`），然后打开 App
+   —— 只需要这一个系统包；`Ubuntu-XFCE-source-v42.tar.gz` 是源码存档，**不用导入**
 3. 首次启动会提示**「需要先授权」**——点「去授权」把「所有文件访问」打开，返回后自动开始导入（900MB 解包约 5~15 分钟，期间别关应用）
 4. 导入完成后默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权），弹窗点「立即重启」即可按新模式启动，终端提示符和桌面一起切换，无需杀 App
 5. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
