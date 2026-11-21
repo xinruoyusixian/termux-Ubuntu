@@ -39,14 +39,27 @@
 
 > **不需要单独安装 Termux:X11**：显示层（Lorie）已内置在 APK 里。`Termux-X11.apk` 仅在配合原版 Termux 时才需要。
 >
-> v42 是一次**稳定性集中修复**，全部在真机双模式验证：① Chrome「打开你的个人资料出了点问题」——profile 数据库锁残留 + `SingletonLock` 指向死 pid，改为启动前自愈；② 输入法「状态栏空白、点一下才生效」——fcitx5 的 `ActiveByDefault` 默认是 False，改为每次启动强制 True；③ 切模式后输入法/Chrome 互相抢 XIM 与 profile 锁——启动前清掉另一端命名空间的残留进程；④ 「重启后黑屏」——`termux-x11` 进程存活但没建 X socket，脚本误判"已运行"直接跳过，改为僵尸检测自愈；⑤ 面板新增「中英切换」按钮（精简主题缺 StatusNotifier 宿主，托盘区永远空白）；⑥ App UID 全链路动态解析，不再硬编码（本机实测 10167，此前写死 10183）；⑦ 启动横幅版本号改为运行期读取，不再硬编码在脚本里。
+> v42 是一次**稳定性集中修复**，全部在真机双模式验证：
+> ① Chrome「打开你的个人资料出了点问题」——profile 数据库锁残留 + `SingletonLock` 指向死 pid，改为启动前自愈；
+> ② 输入法「状态栏空白、点一下才生效」——fcitx5 的 `ActiveByDefault` 默认是 False，改为每次启动强制 True；
+> ③ 切模式后输入法/Chrome 互相抢 XIM 与 profile 锁——启动前清掉另一端命名空间的残留进程；
+> ④ 「重启后黑屏」——`termux-x11` 进程存活但没建 X socket，脚本误判"已运行"直接跳过，改为僵尸检测自愈；
+> ⑤ 面板新增「中英切换」按钮（精简主题缺 StatusNotifier 宿主，托盘区永远空白）；
+> ⑥ App UID 由 App 自己落盘（`Process.myUid()` → `$FILES/.app-uid`），脚本优先读它，重装换 UID 也不受影响；
+> ⑦ 启动横幅版本号改为运行期读取，不再硬编码在脚本里；
+> ⑧ **首装授权自检**——缺「所有文件访问」时弹窗引导，不再只吐一句英文 `Permission denied`；
+> ⑨ **没有 root 也能装**——`su` 不可用时正常降级到 App 身份解压（proot 可用），不再中断导入；
+> ⑩ **后补 root 自动校正属主/setuid**——修 `sudo: 必须属于用户 ID 0 并且设置 setuid 位`；
+> ⑪ **「KernelSU 授权了还说没 root」**——否定缓存加 15 秒 TTL + 切模式主动作废，不必再杀 App。
 
 ## 功能特性
 
 - **显示层内置**：X11 显示 + 悬浮菜单全部编译进同一 APK，无需另装显示端
 - **默认非 root**：首次启动默认走非 root（proot）模式；终端菜单可一键切换，设备真没 root 时明确提示
 - **root 检测健壮**：装了 KernelSU/Magisk 管理器不算 root，实测 `su -c id` 通过才算；su 丢失自动降级非 root，不再报 `No su program found`
-- **uid 跨设备自适应**：不同设备 `com.termux` 的 uid 不同（10167/10183…），脚本运行时动态取，不写死；换设备/格式化重装不会黑屏
+- **uid 跨设备自适应**：不同设备 `com.termux` 的 uid 不同（10167/10183…），App 启动时用自己的 `Process.myUid()` 写到 `$FILES/.app-uid`，脚本优先读它、再退 `stat`/`pm` 反推，全程不写死；换设备、卸载重装换 uid 都不会黑屏
+- **首装授权自检**：全新安装的 App 没有任何权限，`/sdcard` 直接读不了。导入前会检查「所有文件访问」，缺权限就弹窗说明并给「去授权」，返回后自动继续导入——不会等到解压时报一句英文 `Permission denied`
+- **没有 root 也能用**：`su` 不可用时自动降级到 App 身份解压（proot 在用户态伪装 uid，功能完整）；之后补好 root 再切 chroot，首次启动会自动校正属主/权限/setuid（失败不写标记，下次重试）
 - **终端 ↔ 桌面双向切换**：X11 悬浮菜单「终端模式」回终端；终端抽屉「进入桌面」回桌面；**全局只保留一个 X11 窗口**
 - **下载目录共享（双模式可用）**：菜单「挂载下载」走 Android「所有文件访问」授权，root 与非 root 都能读写 `/sdcard/Download`，桌面里位于 `/mnt/download`；用 App 私有暂存区同步，卸载/清数据不会穿透删除 SD 卡文件
 - **整系统备份/恢复**：菜单「备份系统」把当前系统（**含你的个人信息**）打包到 `/sdcard/UbuntuXFCE/backups/`；「恢复备份」从备份包还原，包列表直接显示文件名、大小、时间。发布的系统包则**绝不含个人信息**
@@ -57,16 +70,21 @@
 ## 快速开始
 
 1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v42.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v42.apk`，一个包即可）
-2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v42.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
-3. 默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权），弹窗点「立即重启」即可按新模式启动，终端提示符和桌面一起切换，无需杀 App
-4. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
-5. 备份/恢复：终端抽屉或 X11 面板都有「备份系统」「恢复备份」两个按钮
+2. 把 `Ubuntu-XFCE-rootfs-v42.tar.gz` 放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz`，然后打开 App
+3. 首次启动会提示**「需要先授权」**——点「去授权」把「所有文件访问」打开，返回后自动开始导入（900MB 解包约 5~15 分钟，期间别关应用）
+4. 导入完成后默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权），弹窗点「立即重启」即可按新模式启动，终端提示符和桌面一起切换，无需杀 App
+5. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
+6. 备份/恢复：终端抽屉或 X11 面板都有「备份系统」「恢复备份」两个按钮
+
+> **重装过 App 的话注意**：Android 会给新安装分配**新的 uid**，KernelSU 里那条旧授权会失效（表现为「我明明授权了，App 还说没有 root」）。
+> 正确做法是在 KernelSU 里刷新应用列表后重新授权；若管理器一直写回旧 uid，可用 `tools/fix_ksu_allowlist.py` 直接修正白名单（uid 动态读取，不会写死）。
 
 详细步骤、菜单说明、备份恢复、常见问题见 **[docs/使用与部署说明.md](docs/使用与部署说明.md)**。
 
 ## 隐私说明
 
-- **发布的系统包**打包前执行 `tools/clean_rootfs.sh`，删除 Chrome profile（History/Cookies/Login Data）、浏览器缓存、shell 历史、最近文件列表，**不含任何个人信息**
+- **发布的系统包**打包前执行 `tools/clean_rootfs.sh`：删除 Chrome profile（History/Cookies/Login Data）、浏览器缓存、shell 历史、最近文件列表、X 会话凭据、`/root` 下的调试残留，并清空 apt 索引与各类缓存（v42 实测回收 441MB），**不含任何个人信息**
+- **打包后复查**：对产物 `tar tzf` 列表做关键字扫描（`google-chrome` 只应命中浏览器本体与图标，`.config/google-chrome`、`Cookies`、`Login Data`、`.ssh`、`.bash_history` 必须为 0）
 - **用户主动备份**是相反策略：`backup-rootfs.sh` 原样保留全部个人数据，方便迁移/留存，包放在公共存储，请妥善保管
 
 ## 重新构建
@@ -74,12 +92,16 @@
 ```bash
 # 需要 JDK 17（含 javac）、Android SDK
 export JAVA_HOME=<jdk路径>
+# 打包前先校验脚本换行（Windows 上极易被写成 CRLF，会让 root 模式直接闪退）
+sh tools/check_assets_lf.sh
 cd termux-app-master
 ./gradlew :app:assembleRelease -PappVersionName=0.118.0-v42
 # 产物: app/build/outputs/apk/release/termux-app_apt-android-7-release_universal.apk
 ```
 
 > 版本号现在由 `-PappVersionName` 正确写入 `versionName`（v37 起支持；之前只认环境变量 `TERMUX_APP_VERSION_NAME`，导致 APK 一直显示 0.118.0）。
+>
+> **`check_assets_lf.sh` 不是可选项**：assets 里的 `*.sh` 由 Android 的 toybox sh 直接执行，混入 `\r` 会报 `syntax error: unmatched 'if'`、变量尾部带 `\r` 导致路径错乱（症状看起来像「uid 没拿到」）。`.gitattributes` 已强制 `*.sh` 用 LF，但在 Windows 上用脚本/编辑器改文件仍可能破坏，打包前跑一次最稳。
 
 改 `assets/` 里的脚本或 Java/布局，只需重编 APK；**升级时脚本类 asset 会强制覆盖**，不会出现「改了脚本但老用户仍跑旧版」。系统包（rootfs）在**安卓设备上**打包（避免权限问题）：推送并执行 `tools/pack_rootfs_on_device.sh`，产物在设备 `/data/local/tmp/rootfs-release.tar.gz`，再 `adb pull` 回来。发布前务必先跑 `tools/clean_rootfs.sh`。
 
@@ -99,7 +121,7 @@ cd termux-app-master
 | **v38** | **修复 root 模式桌面缺浏览器/输入法（启动幂等补桌面图标、默认浏览器、fcitx5 自启）+ 修复非 root（proot）桌面黑屏（APK 路径不依赖 pm、SELinux MLS 标签对齐、日志属主/目录加固、X server 失败快速报错）；双模式真机验证通过** |
 | **v39** | **修复模式切换后「立即重启」仍按旧模式启动（目标模式只读 `.force-noroot` 标记、清理用 root 通杀旧桌面、启动按目标模式选 App/su 身份、统一 su 探测缓存）+ 修复切换后 `.pulse-rt` 残留 root 属主导致无声；双向切换真机验证通过** |
 | **v40** | **补齐模式切换最后一环：终端会话随模式重建（旧 Linux 会话 kill + 按新标记重新 prepare），切 root 后终端立即变 `root@localhost:~#`、切非 root 变 `$`，无需杀 App；并修掉僵尸会话导致下次冷启动显示 `[Process completed]` 的问题** |
-| **v42** | **稳定性集中修复（双模式真机验证）：Chrome profile 锁自愈（SQLite journal/wal/shm 残留 + SingletonLock 死 pid）、输入法默认不激活（`ActiveByDefault` 强制 True）、跨模式 fcitx5/chrome 残留互杀、僵尸 X server 黑屏自愈、面板「中英切换」按钮、App UID 全链路动态解析、启动横幅版本号运行期读取** |
+| **v42** | **稳定性集中修复（双模式真机验证）：Chrome profile 锁自愈（SQLite journal/wal/shm 残留 + SingletonLock 死 pid）、输入法默认不激活（`ActiveByDefault` 强制 True）、跨模式 fcitx5/chrome 残留互杀、僵尸 X server 黑屏自愈、面板「中英切换」按钮、启动横幅版本号运行期读取；**首装授权自检（缺「所有文件访问」弹窗引导）、无 root 也能导入、后补 root 自动校正属主/setuid、root 检测否定缓存加 TTL（修「KernelSU 授权完还说没 root」）、uid 由 App 落盘 `$FILES/.app-uid`、防脚本 CRLF（`.gitattributes` + `tools/check_assets_lf.sh`）** |
 
 ## 重要文档
 
@@ -108,4 +130,5 @@ cd termux-app-master
 - v37 新增 **[docs/踩坑记录/11-备份恢复与发布流程.md](docs/踩坑记录/11-备份恢复与发布流程.md)** —— su 传参、/dev/null、选包 UI、lazy umount 等
 - v38 新增 **[docs/踩坑记录/12-v38桌面黑屏与入口丢失.md](docs/踩坑记录/12-v38桌面黑屏与入口丢失.md)** —— pm path 失败、SELinux MLS 标签、日志属主挡重定向
 - v39 新增 **[docs/踩坑记录/13-模式切换重启不生效.md](docs/踩坑记录/13-模式切换重启不生效.md)** —— su 双缓存、目标模式真相源、清理/启动身份分离、pulse-rt 属主残留、v40 终端会话重建与僵尸会话
+- v42 新增 **[docs/踩坑记录/14-首启授权与属主与CRLF.md](docs/踩坑记录/14-首启授权与属主与CRLF.md)** —— 首装无「所有文件访问」、`su` 不可用导致导入中断、KernelSU 白名单陈旧 uid、脚本 CRLF 伪装成「uid 没拿到」、`fix_perms` 失败却写标记导致 sudo 永久坏
 - 源码改了什么、怎么构建见 **[docs/源码改动说明.md](docs/源码改动说明.md)**
