@@ -464,6 +464,80 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }, "linux-launcher").start();
     }
 
+    /**
+     * 模式切换后的「立即重启」：桌面栈 + 终端会话一起按新模式重建（v40）。
+     *
+     * 为什么不能只调 PadMenu.restartDesktop()：那只会杀掉 X server / XFCE / 音频
+     * 再按新模式拉桌面，但终端里的 shell 会话是 App 冷启动时 launchLinuxIfNeeded()
+     * 建立的，一直挂着旧模式（非 root 就是普通 sh，root 才是 chroot bash）。
+     * 结果就是「提示已切 root、桌面也是 root，但终端提示符还是 $」——用户只能杀 App
+     * 让会话重建才生效。这里把会话也换掉，才是真正的整系统重启。
+     *
+     * 顺序：① 清理旧桌面栈（root 全量脚本通杀任何模式）→ ② kill 所有 "Linux" 会话
+     * → ③ 按新标记重新 prepare() → ④ 新建会话（其启动命令自带拉桌面）。
+     */
+    public void restartSystemForModeSwitch() {
+        showToast("正在重启 Ubuntu 系统（终端+桌面）…", true);
+        new Thread(() -> {
+            // ① 清理旧桌面栈。root 版清理脚本按命令行通杀 X server/XFCE/proot 并
+            //    卸载 chroot 挂载，无论旧会话是哪种模式都能清干净；等待完成再往下走。
+            LinuxLauncher.ensureRootCleanupScript(this);
+            final boolean hasSu = LinuxLauncher.isSuAvailable();
+            final String files = "/data/data/com.termux/files";
+            String cleanup = hasSu
+                    ? "sh " + files + "/linux-cleanup.sh"
+                    : "sh " + LinuxLauncher.NOROOT_CLEANUP_SCRIPT;
+            String shell = hasSu ? LinuxLauncher.suBinary() : "/system/bin/sh";
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{shell, "-c",
+                        "rm -f " + files + "/.session-closing; mkdir -p " + files + "/log; "
+                                + cleanup + " >/dev/null 2>&1"});
+                if (!p.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly();
+            } catch (Exception ignored) {}
+
+            // ② 回 UI 线程 kill 旧会话并重建（会话操作必须在主线程，和冷启动同款）。
+            runOnUiThread(() -> {
+                if (isFinishing() || mTermuxService == null) return;
+                for (com.termux.shared.termux.shell.command.runner.terminal.TermuxSession ts
+                        : new java.util.ArrayList<>(mTermuxService.getTermuxSessions())) {
+                    String name = ts.getExecutionCommand().shellName;
+                    if (name != null && name.startsWith("Linux")) {
+                        // SIGKILL 旧会话，然后直接从列表移除对象。
+                        // 不能用 removeTermuxSession()/finish()：SIGKILL 会把
+                        // ExecutionCommand 置成 failed，finish() 在 failed 状态直接
+                        // return，会话变僵尸 —— 下次冷启动 launchLinuxIfNeeded() 会
+                        // 选中它，显示 "[Process completed] (code 137)" 不再重建。
+                        // 这里照上游 killAllTermuxExecutionCommands 的做法：kill 后
+                        // 显式从 mTermuxSessions（getTermuxSessions 返回其引用）移除。
+                        // processResult=false：普通会话无需走插件结果处理。
+                        ts.killIfExecuting(this, false);
+                        mTermuxService.getTermuxSessions().remove(ts);
+                    }
+                }
+                // ③④ 按新标记 prepare + 新建会话（与 launchLinuxIfNeeded 的会话创建段一致）
+                new Thread(() -> {
+                    final LinuxLauncher.LaunchPlan plan = LinuxLauncher.prepare(TermuxActivity.this);
+                    runOnUiThread(() -> {
+                        if (mTermuxService == null || isFinishing()) return;
+                        try {
+                            if (plan.executable != null) {
+                                mTermuxTerminalSessionActivityClient.addNewSessionWithCommand(
+                                        plan.executable, plan.arguments, "Linux (" + plan.message + ")");
+                                showToast("已按新模式重启（终端+桌面）：" + plan.message, true);
+                            } else {
+                                mTermuxTerminalSessionActivityClient.addNewSession(false, null);
+                                com.termux.shared.interact.MessageDialogUtils.showMessage(
+                                        TermuxActivity.this, "无法进入 Linux", plan.message, null);
+                            }
+                        } catch (WindowManager.BadTokenException ignored) {
+                            // Activity 已结束
+                        }
+                    });
+                }, "relaunch-linux-session").start();
+            });
+        }, "restart-system-mode-switch").start();
+    }
+
     @Override
     public void onServiceDisconnected(ComponentName name) {
         Logger.logDebug(LOG_TAG, "onServiceDisconnected");
@@ -673,7 +747,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                             .setTitle("已切换到 " + mode)
                             .setMessage("新模式会在下次启动 Ubuntu 时生效。是否立即重启系统？")
                             .setNegativeButton("稍后", null)
-                            .setPositiveButton("立即重启", (d, w) -> PadMenu.restartDesktop(this))
+                            // v40: 模式切换必须连终端会话一起重建。
+                            // PadMenu.restartDesktop() 只重启桌面栈，终端 shell 还是
+                            // 冷启动时按旧模式建的会话 —— 表现为"提示已切 root 但终端
+                            // 仍是 $ / Ubuntu(proot)"，只有杀 App 才切换。
+                            .setPositiveButton("立即重启", (d, w) -> restartSystemForModeSwitch())
                             .show();
                 });
             }, "check-root-for-mode").start();
