@@ -46,12 +46,18 @@ if grep -qs '/files/ubuntu/' /proc/mounts; then
   exit 9
 fi
 
-# 2) 清空旧系统再解压（保留当前 uid 自适应在 fix_perms 阶段处理）
-rm -rf "$R" && mkdir -p "$R" || { say ERR "清理旧系统失败"; exit 1; }
-/system/bin/tar xzpf "$SRC" -C "$R" 2>>"$LOG"
-rc=$?
-if [ "$rc" != 0 ]; then
-  # 以 App 身份兜底（备份包属主通常是本 App，无需 root）
+# 2) 解压。有 root 才能「清空 + 保属主还原」；无 root 时绝不能 rm -rf：
+# rootfs 里 /usr /root 等是 root:root 700，App uid 删不掉，rm -rf 会部分失败
+# 后退出，旧系统已被删掉一半 —— 桌面直接黑屏。无 root 改为「不清空、直接覆盖
+# 解压」（tar 不带 -p，所有文件归当前 App uid，正好适合 proot 模式）。
+if [ "$(id -u)" = "0" ]; then
+  say INFO "root 身份：清空后完整还原（保留属主/setuid）"
+  rm -rf "$R" && mkdir -p "$R" || { say ERR "清理旧系统失败"; exit 1; }
+  /system/bin/tar xzpf "$SRC" -C "$R" 2>>"$LOG"
+  rc=$?
+else
+  say INFO "非 root 身份：覆盖式解压（不清空旧系统，避免删残）"
+  mkdir -p "$R" 2>>"$LOG"
   /system/bin/tar xzf "$SRC" -C "$R" 2>>"$LOG"
   rc=$?
 fi
