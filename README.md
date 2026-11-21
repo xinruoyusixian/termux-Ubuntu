@@ -32,13 +32,14 @@
 | 文件 | 说明 | 大小 |
 |------|------|------|
 | `Ubuntu-XFCE-Tablet-v38.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
-| `Ubuntu-XFCE-rootfs-v37.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（**不含任何个人信息**；v38 未改系统包，沿用 v37） | 816MB |
+| `Ubuntu-XFCE-rootfs-v38.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（**v38 修复版**：内置桌面图标/默认浏览器/输入法入口，已清理个人信息） | 816MB |
+| `Ubuntu-XFCE-source-v38.tar.gz` | v38 修复版源码（源码+文档+工具，排除构建产物与 .git） | 89MB |
 | `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
 | `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
 
 > **不需要单独安装 Termux:X11**：显示层（Lorie）已内置在 APK 里。`Termux-X11.apk` 仅在配合原版 Termux 时才需要。
 >
-> v38 只改了 APK 侧（Java / assets 脚本），修复 root 模式浏览器/输入法缺失与非 root（proot）桌面黑屏；系统包内容与 v37 完全一致，无需重新导入。
+> v38 是完整修复版：APK 侧修复 root 模式浏览器/输入法缺失与非 root（proot）桌面黑屏；系统包同步重新打包（内置修复后的桌面入口、已清理隐私），源码包含全部改动与踩坑记录。三者配套使用。
 
 ## 功能特性
 
@@ -56,7 +57,7 @@
 ## 快速开始
 
 1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v38.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v38.apk`，一个包即可）
-2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v37.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
+2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v38.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
 3. 默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权）
 4. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
 5. 备份/恢复：终端抽屉或 X11 面板都有「备份系统」「恢复备份」两个按钮
