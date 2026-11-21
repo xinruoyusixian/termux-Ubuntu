@@ -7,8 +7,8 @@ FD=/data/data/com.termux/files
 R=$FD/ubuntu
 OUT=/sdcard/UbuntuXFCE/backups
 LOG=$FD/log/backup.log
-mkdir -p "$FD/log" "$OUT" 2>/dev/null
-: > "$LOG" 2>/dev/null || LOG=$FD/backup.log
+mkdir -p "$FD/log" "$OUT" 2>>"$LOG"
+: > "$LOG" || LOG=$FD/backup.log
 
 say() { echo "$*" >> "$LOG"; echo "RESULT $*"; }
 
@@ -16,16 +16,16 @@ say() { echo "$*" >> "$LOG"; echo "RESULT $*"; }
 
 # 1) 关掉正在运行的桌面/浏览器，避免打包时文件在变（tar 读到半截文件）
 #    只杀 guest 用户态进程，Android 侧 X server 保留无妨。
-pkill -x xfce4-session 2>/dev/null
-pkill -x startxfce4 2>/dev/null
-pkill -x xfwm4 2>/dev/null
-pkill -x xfce4-panel 2>/dev/null
-pkill -x xfdesktop 2>/dev/null
-pkill -x thunar 2>/dev/null
-pkill -x fcitx5 2>/dev/null
-pkill -x pulseaudio 2>/dev/null
-pkill -f google-chrome 2>/dev/null
-pkill -f chrome_crashpad 2>/dev/null
+pkill -x xfce4-session 2>>"$LOG"
+pkill -x startxfce4 2>>"$LOG"
+pkill -x xfwm4 2>>"$LOG"
+pkill -x xfce4-panel 2>>"$LOG"
+pkill -x xfdesktop 2>>"$LOG"
+pkill -x thunar 2>>"$LOG"
+pkill -x fcitx5 2>>"$LOG"
+pkill -x pulseaudio 2>>"$LOG"
+pkill -f google-chrome 2>>"$LOG"
+pkill -f chrome_crashpad 2>>"$LOG"
 sleep 2
 
 # 2) 排除运行时挂载：/proc /sys /dev /tmp /mnt/download 都是宿主目录 bind 进来的，
@@ -53,7 +53,7 @@ if [ "$rc" != 0 ] || [ ! -s "$TMP" ]; then
   exit 1
 fi
 # 辅助判定：tar 若把权限被拒当致命错误会写 "tar: had errors"，这里也拦一下
-if grep -q 'Permission denied' "$LOG" 2>/dev/null; then
+if grep -q 'Permission denied' "$LOG" 2>>"$LOG"; then
   say WARN "打包过程中有个别文件无法读取（详见 $LOG），主体已打包"
 fi
 
@@ -66,6 +66,6 @@ if [ "$rc" != 0 ] || [ ! -s "$TMPGZ" ]; then
   exit 1
 fi
 
-mv -f "$TMPGZ" "$F" 2>/dev/null || { cp "$TMPGZ" "$F" && rm -f "$TMPGZ"; }
-SZ=$(du -h "$F" 2>/dev/null | awk '{print $1}')
+mv -f "$TMPGZ" "$F" 2>>"$LOG" || { cp "$TMPGZ" "$F" && rm -f "$TMPGZ"; }
+SZ=$(du -h "$F" 2>>"$LOG" | awk '{print $1}')
 say OK "备份完成：$F（$SZ）"

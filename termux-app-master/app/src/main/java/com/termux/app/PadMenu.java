@@ -6,6 +6,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
@@ -274,32 +278,66 @@ public final class PadMenu {
                     .show();
             return;
         }
-        CharSequence[] names = new CharSequence[pkgs.length];
-        for (int i = 0; i < pkgs.length; i++) {
-            names[i] = pkgs[i].getName() + "  (" + pkgs[i].length() / 1024 / 1024 + " MB)";
-        }
-        new AlertDialog.Builder(act)
+        // 不用 AlertDialog.setItems()：Termux 深色主题下该系统列表实测会被渲染成
+        // 全空白（只剩标题/说明/「取消」，用户根本选不了包）。改成自建按钮列表，
+        // 文字与背景色显式指定，任何主题下都可见、可点。
+        final float dp = act.getResources().getDisplayMetrics().density;
+        final int pad = (int) (16 * dp);
+        final LinearLayout box = new LinearLayout(act);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, pad, pad, 0);
+
+        TextView tip = new TextView(act);
+        tip.setText("恢复会先关闭桌面并清空当前系统，再用所选备份覆盖。\n"
+                + "当前系统里未备份的改动会丢失。");
+        tip.setTextColor(0xFFDDDDDD);
+        tip.setTextSize(14f);
+        tip.setPadding(0, 0, 0, pad);
+        box.addView(tip);
+
+        final ScrollView scroll = new ScrollView(act);
+        scroll.addView(box);
+        final AlertDialog chooser = new AlertDialog.Builder(act)
                 .setTitle("选择要恢复的备份")
-                .setMessage("恢复会先关闭桌面并清空当前系统，再用所选备份覆盖。"
-                        + "当前系统里未备份的改动会丢失。")
-                .setItems(names, (d, which) -> {
-                    final File chosen = pkgs[which];
-                    new AlertDialog.Builder(act)
-                            .setTitle("确认恢复")
-                            .setMessage("确定从\n" + chosen.getName() + "\n恢复吗？\n\n"
-                                    + "这会清空当前系统并覆盖，耗时数分钟，期间请勿关闭应用。")
-                            .setNegativeButton("取消", null)
-                            .setPositiveButton("确认恢复", (d2, w2) -> {
-                                toast(act, "正在恢复，请耐心等待…");
-                                new Thread(() -> {
-                                    String r = LinuxLauncher.restoreSystem(act, chosen);
-                                    toast(act, r.startsWith("OK:") ? r.substring(3) : r);
-                                }, "restore-system").start();
-                            })
-                            .show();
-                })
+                .setView(scroll)
                 .setNegativeButton("取消", null)
-                .show();
+                .create();
+
+        final java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat(
+                "yyyy-MM-dd HH:mm", java.util.Locale.getDefault());
+        for (final File pkg : pkgs) {
+            Button b = new Button(act);
+            b.setAllCaps(false);
+            b.setText(pkg.getName() + "\n"
+                    + (pkg.length() / 1024 / 1024) + " MB · "
+                    + fmt.format(new java.util.Date(pkg.lastModified())));
+            b.setTextColor(0xFFFFFFFF);
+            b.setBackgroundColor(0xFF37474F);
+            b.setTextSize(14f);
+            b.setPadding(pad, pad / 2, pad, pad / 2);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = (int) (8 * dp);
+            box.addView(b, lp);
+            b.setOnClickListener(v -> {
+                chooser.dismiss();
+                new AlertDialog.Builder(act)
+                        .setTitle("确认恢复")
+                        .setMessage("确定从\n" + pkg.getName() + "\n恢复吗？\n\n"
+                                + "这会清空当前系统并覆盖，耗时数分钟，期间请勿关闭应用。")
+                        .setNegativeButton("取消", null)
+                        .setPositiveButton("确认恢复", (d2, w2) -> {
+                            toast(act, "正在恢复，请耐心等待…");
+                            new Thread(() -> {
+                                String r = LinuxLauncher.restoreSystem(act, pkg);
+                                toast(act, r.startsWith("OK:") ? r.substring(3) : r);
+                            }, "restore-system").start();
+                        })
+                        .show();
+            });
+        }
+        chooser.show();
     }
 
     /** 重新导入系统包：清空已解压的系统并从 /sdcard 重新解压 */

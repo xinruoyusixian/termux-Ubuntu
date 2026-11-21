@@ -581,6 +581,11 @@ public final class LinuxLauncher {
     }
 
     /** 从指定备份包恢复系统（含用户个人信息）。必须在子线程调用。 */
+    /** shell 单引号转义：把任意路径安全地拼进 sh -c 命令，防空格/单引号/注入 */
+    private static String shellQuote(String s) {
+        return "'" + s.replace("'", "'\\''") + "'";
+    }
+
     public static String restoreSystem(Context ctx, File pkg) {
         if (pkg == null || !pkg.isFile()) return "备份包不存在";
         try {
@@ -590,14 +595,16 @@ public final class LinuxLauncher {
         } catch (Exception e) {
             return "恢复脚本写入失败：" + e.getMessage();
         }
-        // 同备份：用设备真实 root 能力恢复，rootfs 的属主/setuid 需要 root 才能还原。
-        // 用 ProcessBuilder 数组传参，避免文件名含单引号时把 shell 命令拼坏（L1）。
+        // 用设备真实 root 能力恢复，rootfs 的属主/setuid 需要 root 才能还原。
+        // 注意：不能用 `su -c '... "$1"' sh <路径>` —— Android 的 su 不会把后续
+        // 位置参数传给 -c 的命令，脚本会拿到空路径直接报「备份包不存在」。
+        // 改成把路径做单引号转义后拼进命令字符串：既能正确传参，也防文件名
+        // 含空格/单引号时被拆开或注入。
         boolean rooted = isSuAvailable();
         try {
             ProcessBuilder pb = new ProcessBuilder(
                     rooted ? suBinary() : "/system/bin/sh",
-                    "-c", "sh " + RESTORE_SCRIPT + " \"$1\"", "sh",
-                    pkg.getAbsolutePath());
+                    "-c", "sh " + RESTORE_SCRIPT + " " + shellQuote(pkg.getAbsolutePath()));
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String out = readAll(p.getInputStream()) + readAll(p.getErrorStream());
@@ -1111,7 +1118,11 @@ public final class LinuxLauncher {
         if (parent != null && !parent.exists()) parent.mkdirs();
         try (InputStream in = ctx.getAssets().open(assetName)) {
             int size = in.available();
-            if (dest.exists() && dest.length() == size) {
+            // 脚本类体积小但改动频繁，必须总是用 APK 内置版本覆盖：
+            // 只比文件大小的话，若改完大小恰好没变，老用户升级后仍跑旧脚本。
+            // 大资源包（.bin）保留大小比较，避免每次导入都重复复制十几 MB。
+            boolean force = assetName.endsWith(".sh") || assetName.endsWith(".pa");
+            if (!force && dest.exists() && dest.length() == size) {
                 dest.setExecutable(true, false);
                 return;
             }
