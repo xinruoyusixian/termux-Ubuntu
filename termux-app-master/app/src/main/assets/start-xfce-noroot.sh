@@ -38,6 +38,16 @@ if [ -f "$FD/.session-closing" ]; then
   exit 0
 fi
 
+# 0.01) 清理 root(chroot) 模式残留的 fcitx5/chrome：
+#       从 root 模式切换到 proot 模式时，旧 chroot 会话的 fcitx5/chrome 在
+#       Android 全局命名空间仍可见，它们的 DISPLAY 与新 proot 会话冲突
+#       → 输入法不生效 / Chrome profile 锁冲突。
+#       必须在 proot 启动前清理（proot 内看不到 chroot 命名空间的进程）。
+pkill -9 -x fcitx5 2>/dev/null
+pkill -9 -x chrome 2>/dev/null
+pkill -9 -f "google-chrome" 2>/dev/null
+sleep 0.5
+
 # 0) 首次运行把 pulseaudio/proot 等从随包分发的 tar 里补齐（幂等）
 if { [ ! -x "$TXU/bin/pulseaudio" ] || [ ! -x "$TXU/bin/proot" ]; } && [ -f "$FD/termux-pkgs.tar.gz" ]; then
   TD=$FD/tmp-txroot
@@ -74,6 +84,14 @@ mkdir -p "$R/.shm" 2>/dev/null
 chmod 1777 "$R/.shm" 2>/dev/null
 
 # 1) X server（App uid 直接跑，socket 放在 Termux usr/tmp，proot 会把它 bind 成 /tmp/.X11-unix）
+#    僵尸 X（有进程无 socket）必须杀掉重来，否则下面直接跳过启动 → 永久黑屏
+if pgrep -f "termux-x11" >/dev/null 2>&1 && [ ! -S "$TXU/tmp/.X11-unix/X0" ]; then
+  echo "检测到僵尸 X server（有进程无 socket），清理重启"
+  pkill -9 -f "termux-x11" 2>/dev/null
+  pkill -9 -f "CmdEntryPoint" 2>/dev/null
+  sleep 1
+  rm -f "$TXU/tmp/.X0-lock" "$TXU/tmp/.X11-unix/X0" 2>/dev/null
+fi
 if ! pgrep -f "termux-x11" >/dev/null 2>&1; then
   rm -f "$TXU/tmp/.X0-lock" "$TXU/tmp/.X11-unix/X0" 2>/dev/null
   CLASSPATH="$APK" TMPDIR="$TXU/tmp" XKB_CONFIG_ROOT="$R/usr/share/X11/xkb" \
@@ -132,6 +150,7 @@ if ! pgrep -f "[p]root.*ubuntu" >/dev/null 2>&1; then
     -b "$R/home/alan":/root \
     -b "$FD/start-desktop-noroot.sh":/root/start-desktop-noroot.sh \
     -b "$FD/install-desktop-icons.sh":/root/install-desktop-icons.sh \
+    -b "$FD/install-im-toggle.sh":/root/install-im-toggle.sh \
     -b "$FD/chrome-noroot.sh":/usr/bin/google-chrome-stable \
     -w /root \
     /bin/bash -c "unset XAUTHORITY; export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export HOME=/root; /bin/bash /root/start-desktop-noroot.sh" \

@@ -2,7 +2,7 @@
 
 在安卓平板上运行的 Ubuntu 24.04 XFCE 桌面。基于 Termux App 源码二次开发，**X11 显示层与悬浮菜单已编译进同一个 APK**，支持 **root（chroot）/ 非 root（proot）双模式**，可一键启动完整 Ubuntu 桌面，终端与桌面双向切换。支持整系统备份/恢复，uid 跨设备自适应。
 
-![版本](https://img.shields.io/badge/版本-v40-blue) ![平台](https://img.shields.io/badge/平台-Android%20arm64-green) ![模式](https://img.shields.io/badge/模式-chroot%20%2F%20proot-orange) ![默认](https://img.shields.io/badge/默认-非root-green)
+![版本](https://img.shields.io/badge/版本-v42-blue) ![平台](https://img.shields.io/badge/平台-Android%20arm64-green) ![模式](https://img.shields.io/badge/模式-chroot%20%2F%20proot-orange) ![默认](https://img.shields.io/badge/默认-非root-green)
 
 ## 目录结构
 
@@ -27,19 +27,19 @@
 
 ## 下载
 
-资源包体积大，不进 git，统一发布在 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v40)：
+资源包体积大，不进 git，统一发布在 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v42)：
 
 | 文件 | 说明 | 大小 |
 |------|------|------|
-| `Ubuntu-XFCE-Tablet-v40.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
-| `Ubuntu-XFCE-rootfs-v40.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（内置桌面图标/默认浏览器/输入法入口，已清理个人信息） | 816MB |
-| `Ubuntu-XFCE-source-v40.tar.gz` | v40 源码（源码+文档+工具，排除构建产物与 .git） | 89MB |
+| `Ubuntu-XFCE-Tablet-v42.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
+| `Ubuntu-XFCE-rootfs-v42.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（内置桌面图标/默认浏览器/输入法入口/中英切换按钮，已清理个人信息） | 816MB |
+| `Ubuntu-XFCE-source-v42.tar.gz` | v42 源码（源码+文档+工具，排除构建产物与 .git） | 89MB |
 | `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
 | `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
 
 > **不需要单独安装 Termux:X11**：显示层（Lorie）已内置在 APK 里。`Termux-X11.apk` 仅在配合原版 Termux 时才需要。
 >
-> v40 在 v39 基础上补齐模式切换的最后一环：**终端会话也随模式重建**。v39 只重建了桌面栈，导致「提示已切 root、桌面也切了，但终端提示符还是 proot 的 `$`，必须杀 App 才变」。v40 的「立即重启」会 kill 旧 Linux 会话并按新标记重新 `prepare()`，终端直接变成 `root@localhost:~#`（root）或 `$`（proot）。三者（APK/rootfs/source）配套使用。
+> v42 是一次**稳定性集中修复**，全部在真机双模式验证：① Chrome「打开你的个人资料出了点问题」——profile 数据库锁残留 + `SingletonLock` 指向死 pid，改为启动前自愈；② 输入法「状态栏空白、点一下才生效」——fcitx5 的 `ActiveByDefault` 默认是 False，改为每次启动强制 True；③ 切模式后输入法/Chrome 互相抢 XIM 与 profile 锁——启动前清掉另一端命名空间的残留进程；④ 「重启后黑屏」——`termux-x11` 进程存活但没建 X socket，脚本误判"已运行"直接跳过，改为僵尸检测自愈；⑤ 面板新增「中英切换」按钮（精简主题缺 StatusNotifier 宿主，托盘区永远空白）；⑥ App UID 全链路动态解析，不再硬编码（本机实测 10167，此前写死 10183）；⑦ 启动横幅版本号改为运行期读取，不再硬编码在脚本里。
 
 ## 功能特性
 
@@ -56,8 +56,8 @@
 
 ## 快速开始
 
-1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v40.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v40.apk`，一个包即可）
-2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v40.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
+1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v42.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v42.apk`，一个包即可）
+2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v42.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
 3. 默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权），弹窗点「立即重启」即可按新模式启动，终端提示符和桌面一起切换，无需杀 App
 4. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
 5. 备份/恢复：终端抽屉或 X11 面板都有「备份系统」「恢复备份」两个按钮
@@ -75,7 +75,7 @@
 # 需要 JDK 17（含 javac）、Android SDK
 export JAVA_HOME=<jdk路径>
 cd termux-app-master
-./gradlew :app:assembleRelease -PappVersionName=0.118.0-v40
+./gradlew :app:assembleRelease -PappVersionName=0.118.0-v42
 # 产物: app/build/outputs/apk/release/termux-app_apt-android-7-release_universal.apk
 ```
 
@@ -99,6 +99,7 @@ cd termux-app-master
 | **v38** | **修复 root 模式桌面缺浏览器/输入法（启动幂等补桌面图标、默认浏览器、fcitx5 自启）+ 修复非 root（proot）桌面黑屏（APK 路径不依赖 pm、SELinux MLS 标签对齐、日志属主/目录加固、X server 失败快速报错）；双模式真机验证通过** |
 | **v39** | **修复模式切换后「立即重启」仍按旧模式启动（目标模式只读 `.force-noroot` 标记、清理用 root 通杀旧桌面、启动按目标模式选 App/su 身份、统一 su 探测缓存）+ 修复切换后 `.pulse-rt` 残留 root 属主导致无声；双向切换真机验证通过** |
 | **v40** | **补齐模式切换最后一环：终端会话随模式重建（旧 Linux 会话 kill + 按新标记重新 prepare），切 root 后终端立即变 `root@localhost:~#`、切非 root 变 `$`，无需杀 App；并修掉僵尸会话导致下次冷启动显示 `[Process completed]` 的问题** |
+| **v42** | **稳定性集中修复（双模式真机验证）：Chrome profile 锁自愈（SQLite journal/wal/shm 残留 + SingletonLock 死 pid）、输入法默认不激活（`ActiveByDefault` 强制 True）、跨模式 fcitx5/chrome 残留互杀、僵尸 X server 黑屏自愈、面板「中英切换」按钮、App UID 全链路动态解析、启动横幅版本号运行期读取** |
 
 ## 重要文档
 

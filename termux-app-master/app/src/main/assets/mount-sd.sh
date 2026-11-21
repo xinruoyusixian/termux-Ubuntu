@@ -14,7 +14,10 @@ export PATH=/system/bin:/system/xbin
 R=/data/data/com.termux/files/ubuntu
 FD=/data/data/com.termux/files
 XFER=$FD/download-xfer
-APP_UID=$(stat -c %u "$FD" 2>/dev/null); [ -n "$APP_UID" ] || APP_UID=10183
+# App uid 动态解析：不同设备/重装会变，禁止写死 10183
+APP_UID=$(stat -c %u "$FD" 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
 mkdir -p "$FD/log"; chown "$APP_UID:$APP_UID" "$FD/log" 2>/dev/null
 LOG=$FD/log/mount-sd.log
 

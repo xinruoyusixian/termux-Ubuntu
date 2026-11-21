@@ -248,7 +248,7 @@ public final class PadMenu {
         if (LinuxLauncher.hasRoot(ctx)) {
             runSu(ctx, cmd, "音频已重启");
         } else {
-            // 非 root：App 自己就是 10183，不用 chown / su，直接跑
+            // 非 root：App 自己的 uid 就是 rootfs 里 alan 的 uid，不用 chown / su，直接跑
             runSh(ctx, "pkill -x pulseaudio; sleep 1; "
                     + "rm -rf " + FILES_DIR + "/home/.pulse-rt; "
                     + "mkdir -p " + FILES_DIR + "/home/.pulse-rt; "

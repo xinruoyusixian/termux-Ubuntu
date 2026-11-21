@@ -33,6 +33,35 @@ if [ ! -s /etc/resolv.conf ]; then
   printf 'nameserver 223.5.5.5\nnameserver 119.29.29.29\n' > /etc/resolv.conf 2>/dev/null
 fi
 
+# 0.5) 系统总线：Chrome 启动时会连 /run/dbus/system_bus_socket，
+#      proot 内没有系统 dbus-daemon → Chrome 日志刷 "Failed to connect to socket"。
+#      启动一个系统总线（幂等），与 root 版保持一致。
+mkdir -p /run/dbus 2>/dev/null
+if ! pgrep -x dbus-daemon >/dev/null 2>&1 || [ ! -S /run/dbus/system_bus_socket ]; then
+  dbus-daemon --system --fork 2>/dev/null
+  sleep 0.3
+fi
+chmod 666 /run/dbus/system_bus_socket 2>/dev/null
+
+# 0.6) Chrome profile 自愈（数据库锁文件清理）：
+#      Chrome 被强杀（kill -9 / 断电 / 模式切换）后，SQLite 数据库留下
+#      -journal / -wal / -shm 锁文件，下次启动报 "database is locked"
+#      → "打开个人资料出了点问题"。启动前清理这些锁文件。
+_PROFILE="/root/.config/google-chrome"
+if [ -d "$_PROFILE/Default" ]; then
+  find "$_PROFILE/Default/" -name "*-journal" -delete 2>/dev/null
+  find "$_PROFILE/Default/" -name "*-wal" -delete 2>/dev/null
+  find "$_PROFILE/Default/" -name "*-shm" -delete 2>/dev/null
+  if [ -L "$_PROFILE/SingletonLock" ]; then
+    _t=$(readlink "$_PROFILE/SingletonLock" 2>/dev/null)
+    _pid=${_t##*-}
+    case "$_pid" in
+      ''|*[!0-9]*) ;;
+      *) [ -d "/proc/$_pid" ] || rm -f "$_PROFILE/SingletonLock" "$_PROFILE/SingletonCookie" "$_PROFILE/SingletonSocket" 2>/dev/null ;;
+    esac
+  fi
+fi
+
 # 1) X socket 检查
 if [ ! -S /tmp/.X11-unix/X0 ]; then
   echo "X server 未启动"
@@ -62,6 +91,17 @@ else
 fi
 chmod 644 "$TRC" 2>/dev/null
 
+# 2.05) fcitx5 默认激活（幂等）：ActiveByDefault=False 时启动即未激活态，
+#       首次打字只出英文，得手动点一次。必须在 fcitx5 启动前改。
+FC=/root/.config/fcitx5/config
+if [ -f "$FC" ]; then
+  if grep -q '^ActiveByDefault=' "$FC"; then
+    sed -i 's/^ActiveByDefault=.*/ActiveByDefault=True/' "$FC" 2>/dev/null
+  else
+    printf 'ActiveByDefault=True\n' >> "$FC" 2>/dev/null
+  fi
+fi
+
 # 3) XFCE（伪装 root 直接跑，不切用户）
 # 注意：不用 startxfce4/xfce4-session 启动——proot 下它的会话链会导致
 # panel/desktop 窗口一直 unmapped（黑屏）。实测手动直启组件必渲染成功。
@@ -90,13 +130,23 @@ else
   grep -q PULSE_SERVER "$SENV" 2>/dev/null || printf 'export PULSE_SERVER=%s\n' "$PULSE" >> "$SENV"
 fi
 
-# 4) 输入法兜底
+# 4) 输入法兜底 + 默认中文
+#    fcitx5 默认是英文/关闭态，不主动切的话首次打字只出英文，得手动点一下。
 (
   sleep 8
   if ! pgrep -x fcitx5 >/dev/null 2>&1; then
     export DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS DISPLAY=:0 XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
            GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx PULSE_SERVER=$PULSE
     fcitx5 -d >/dev/null 2>&1
+    sleep 2
   fi
+  export DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS DISPLAY=:0 XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
+  fcitx5-remote -s wowtype >/dev/null 2>&1
+  fcitx5-remote -o >/dev/null 2>&1
 ) &
+# 5) 面板「中英切换」按钮（幂等）：放在桌面组件之后，xfconfd 才已就绪。
+#    fcitx5 托盘图标走 StatusNotifierItem，本 rootfs 的 xfce4-panel 4.18.4
+#    未带该宿主插件，托盘区空白 → 用面板启动器给可见入口。
+[ -x /root/install-im-toggle.sh ] && /root/install-im-toggle.sh /root >>"$LOG/icons.log" 2>&1
+
 echo "XFCE(proot) + 音频 + /sdcard 就绪"

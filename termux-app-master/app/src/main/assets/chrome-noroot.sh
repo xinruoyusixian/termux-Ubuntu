@@ -24,6 +24,18 @@ if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -r "$HOME/.runtime/session.env" ]; th
   . "$HOME/.runtime/session.env"
 fi
 
+# 诊断日志：从桌面图标启动时 stdout/stderr 会被丢弃，出问题完全无从查起。
+# 这里把整个启动过程（含 Chrome 自身报错）追加到 ~/.runtime/chrome.log。
+_LOG="${HOME}/.runtime/chrome.log"
+mkdir -p "${HOME}/.runtime" 2>/dev/null
+{
+  echo "=== $(date '+%F %T') chrome launch ==="
+  echo "HOME=$HOME DISPLAY=$DISPLAY"
+  echo "DBUS=${DBUS_SESSION_BUS_ADDRESS:-<empty>}"
+  echo "binary=/opt/google/chrome/chrome exists=$([ -x /opt/google/chrome/chrome ] && echo yes || echo NO)"
+} >> "$_LOG" 2>/dev/null
+exec >>"$_LOG" 2>&1
+
 # 关键自愈：强制杀进程/断电/清数据后，Chrome 会残留 SingletonLock 符号链接。
 # 该链接指向 "localhost-<pid>"，若对应进程已不存在，新启动的 Chrome 会误以为
 # 已有实例在跑，把 URL 转给那个死进程后自己静默退出 —— 表现就是"点图标没反应"。
@@ -39,6 +51,15 @@ if [ -L "$PROFILE/SingletonLock" ]; then
   if [ "$_alive" = 0 ]; then
     rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonCookie" "$PROFILE/SingletonSocket" 2>/dev/null
   fi
+fi
+
+# 数据库锁文件自愈：Chrome 被强杀后 SQLite 留下 -journal/-wal/-shm 锁文件，
+# 下次启动报 "database is locked" → "打开个人资料出了点问题可能无法使用"。
+# 启动前清理这些锁文件（Chrome 会自动重建）。
+if [ -d "$PROFILE/Default" ]; then
+  find "$PROFILE/Default/" -name "*-journal" -delete 2>/dev/null
+  find "$PROFILE/Default/" -name "*-wal" -delete 2>/dev/null
+  find "$PROFILE/Default/" -name "*-shm" -delete 2>/dev/null
 fi
 
 exec /opt/google/chrome/chrome \

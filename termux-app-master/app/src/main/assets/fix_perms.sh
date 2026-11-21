@@ -9,9 +9,15 @@ LOG=$FD/log/fix_perms.log
 mkdir -p "$FD/log"
 : > "$LOG"
 [ -d "$R/etc" ] || { echo "no rootfs"; exit 1; }
-# 当前设备 App uid（跨设备/重装会变，一律动态取，不写死 10183）
-APP_UID=$(stat -c %u /data/data/com.termux 2>>"$LOG")
-[ -n "$APP_UID" ] || APP_UID=10183
+# 当前设备 App uid（跨设备/重装会变，一律动态取，禁止写死 10183）
+# 解析顺序：files 目录属主 → 数据目录属主 → pm 输出的 uid: 字段
+APP_UID=$(stat -c %u /data/data/com.termux/files 2>>"$LOG")
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>>"$LOG")
+[ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
+if [ -z "$APP_UID" ]; then
+  echo "错误：无法确定 com.termux 的 uid，修复中止" | tee -a "$LOG" >&2
+  exit 1
+fi
 # 同步 rootfs 内 alan 账号 uid 与当前设备一致（否则 su - alan 失败 → 黑屏）
 sed -i "s/^alan:x:[0-9]*:[0-9]*:/alan:x:$APP_UID:$APP_UID:/" "$R/etc/passwd" 2>>"$LOG"
 sed -i "s/^alan:x:[0-9]*:/alan:x:$APP_UID:/" "$R/etc/group" 2>>"$LOG"

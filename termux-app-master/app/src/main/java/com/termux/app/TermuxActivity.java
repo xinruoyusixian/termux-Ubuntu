@@ -514,7 +514,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         mTermuxService.getTermuxSessions().remove(ts);
                     }
                 }
+                // 删掉旧的模式标记，让新会话的 boot-log.sh 重写，供下面校验
+                new java.io.File("/data/data/com.termux/files/.boot-mode").delete();
+
                 // ③④ 按新标记 prepare + 新建会话（与 launchLinuxIfNeeded 的会话创建段一致）
+                final boolean targetNonRoot = LinuxLauncher.isNonRootMode();
                 new Thread(() -> {
                     final LinuxLauncher.LaunchPlan plan = LinuxLauncher.prepare(TermuxActivity.this);
                     runOnUiThread(() -> {
@@ -524,10 +528,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                                 mTermuxTerminalSessionActivityClient.addNewSessionWithCommand(
                                         plan.executable, plan.arguments, "Linux (" + plan.message + ")");
                                 showToast("已按新模式重启（终端+桌面）：" + plan.message, true);
+                                // v41 兜底：延时校验终端会话真正跑起来的模式，
+                                // 不符/没起来就杀 App 冷启动（冷启动必按新标记）。
+                                verifyModeAndRelaunchIfNeeded(targetNonRoot);
                             } else {
                                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
                                 com.termux.shared.interact.MessageDialogUtils.showMessage(
                                         TermuxActivity.this, "无法进入 Linux", plan.message, null);
+                                verifyModeAndRelaunchIfNeeded(targetNonRoot);
                             }
                         } catch (WindowManager.BadTokenException ignored) {
                             // Activity 已结束
@@ -536,6 +544,105 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 }, "relaunch-linux-session").start();
             });
         }, "restart-system-mode-switch").start();
+    }
+
+    /**
+     * v41 模式切换兜底：延时读 boot-log.sh 写下的 .boot-mode（终端会话真正启动的模式），
+     * 若与目标模式不符或会话已死，就杀掉 App 再自动拉起——冷启动必定按新标记
+     * prepare，是最彻底的兜底。用户提的"切不过来就杀自己再拉起来"。
+     */
+    private void verifyModeAndRelaunchIfNeeded(final boolean targetNonRoot) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            LinuxLauncher.trace("mode verify tick: want=" + (targetNonRoot ? "proot" : "root")
+                    + " finishing=" + isFinishing());
+            if (isFinishing()) return;
+            String want = targetNonRoot ? "proot" : "root";
+            String actual = "";
+            try {
+                java.io.File f = new java.io.File("/data/data/com.termux/files/.boot-mode");
+                if (f.exists()) {
+                    java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f));
+                    String line = r.readLine();
+                    actual = line == null ? "" : line.trim();
+                    r.close();
+                }
+            } catch (Exception ignored) {}
+
+            // 会话是否还活着（没变成 [Process completed]）
+            boolean sessionAlive = false;
+            if (mTermuxService != null) {
+                for (com.termux.shared.termux.shell.command.runner.terminal.TermuxSession ts
+                        : mTermuxService.getTermuxSessions()) {
+                    String name = ts.getExecutionCommand() == null ? null : ts.getExecutionCommand().shellName;
+                    if (name != null && name.startsWith("Linux") && ts.getTerminalSession().isRunning()) {
+                        sessionAlive = true;
+                        break;
+                    }
+                }
+            }
+
+            LinuxLauncher.trace("mode verify result: want=" + want + " actual=" + actual
+                    + " alive=" + sessionAlive);
+            if (!want.equals(actual) || !sessionAlive) {
+                LinuxLauncher.trace("mode mismatch/failed: want=" + want + " actual=" + actual
+                        + " alive=" + sessionAlive + " -> force relaunch");
+                forceRelaunchApp();
+            }
+        }, 6000);
+    }
+
+    /** 杀掉 App 并安排自动拉起（su am start 主路径 + AlarmManager 双保险，冷启动按新标记重来）。 */
+    private void forceRelaunchApp() {
+        showToast("终端未切到目标模式，正在重启 App 重试…", true);
+        new Thread(() -> {
+            // 1) 停前台服务，否则进程杀不干净
+            try {
+                Intent svc = new Intent(this, com.termux.app.TermuxService.class);
+                svc.setAction("com.termux.service_stop");
+                startService(svc);
+            } catch (Exception ignored) {}
+            try { stopService(new Intent(this, com.termux.app.TermuxService.class)); }
+            catch (Exception ignored) {}
+            // 2) 主拉起路径：su 执行 am start。
+            //    不能用 App 自己的 AlarmManager+PendingIntent.getActivity：
+            //    Android 12+ 禁止后台广播拉 Activity，alarm 触发了但 Activity 起不来
+            //    （实测 pid 杀掉后始终为空）。su 是 root uid，不受该限制。
+            //    sleep 2 等本进程 killProcess 死透再拉，避免拉到正在死的旧进程。
+            //    注意命令末尾不能加 & 后台化：su 会话一退出会连带清掉后台子进程，
+            //    am start 根本不会执行（实测）。Runtime.exec 本身已是独立进程，
+            //    让 su 前台跑完 sleep+am start 即可，主进程死后它照样继续。
+            try {
+                String su = LinuxLauncher.suBinary();
+                String relaunch = "sleep 2; am start -n com.termux/"
+                        + "com.termux.app.TermuxActivity";
+                Runtime.getRuntime().exec(new String[]{su, "-c", relaunch});
+                LinuxLauncher.trace("force relaunch via su am start scheduled");
+            } catch (Exception e) {
+                LinuxLauncher.trace("su relaunch failed: " + e.getMessage());
+            }
+            // 2b) 双保险：AlarmManager 3 秒后再拉一次（某些版本 su 不可用时兜底）
+            try {
+                android.app.AlarmManager am =
+                        (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+                android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                        this, 9411, new Intent(this, TermuxActivity.class),
+                        android.app.PendingIntent.FLAG_IMMUTABLE
+                                | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+                am.setExact(android.app.AlarmManager.RTC_WAKEUP,
+                        System.currentTimeMillis() + 3500, pi);
+                LinuxLauncher.trace("force relaunch scheduled");
+            } catch (Exception e) {
+                LinuxLauncher.trace("force relaunch schedule failed: " + e.getMessage());
+            }
+            // 3) 关 Activity + 杀进程
+            runOnUiThread(() -> {
+                try { finishAffinity(); } catch (Exception ignored) {}
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                    System.exit(0);
+                }, 400);
+            });
+        }, "force-relaunch").start();
     }
 
     @Override

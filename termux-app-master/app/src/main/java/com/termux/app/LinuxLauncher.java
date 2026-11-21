@@ -920,6 +920,10 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "install-desktop-icons.sh",
                     TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-desktop-icons.sh"); }
             catch (Exception e) { Log.e(TAG, "copy install-desktop-icons failed", e); }
+            // 面板「中英切换」按钮（fcitx5 托盘图标缺 StatusNotifier 宿主，用启动器替代）
+            try { copyAssetIfNeeded(ctx, "install-im-toggle.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-im-toggle.sh"); }
+            catch (Exception e) { Log.e(TAG, "copy install-im-toggle failed", e); }
             // Termux 侧依赖（pulseaudio / termux-api）：国内源不可用，随包分发
             // 注意 asset 名必须用 .bin：aapt 会把 .tar.gz 自动解压并改名，导致 open() 失败
             String pkgsTar = TermuxConstants.TERMUX_FILES_DIR_PATH + "/termux-pkgs.tar.gz";
@@ -953,8 +957,16 @@ public final class LinuxLauncher {
                     TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-sync.sh"); } catch (Exception e) {
                 Log.e(TAG, "copy download-sync.sh failed", e);
             }
+            // v41: 启动诊断日志脚本（终端直接打印模式/rootfs 状态/日志路径）
+            String bootLog = TermuxConstants.TERMUX_FILES_DIR_PATH + "/boot-log.sh";
+            try { copyAssetIfNeeded(ctx, "boot-log.sh", bootLog); } catch (Exception e) {
+                Log.e(TAG, "copy boot-log.sh failed", e);
+            }
+            writeAppVersion(ctx); // v42: 横幅版本号不再硬编码
             // chroot needs /dev /proc /sys mounted inside rootfs.
             String mountCmd =
+                    // 终端里先打印一段启动诊断信息，方便直接看当前状态
+                    "sh " + bootLog + " root 2>/dev/null; " +
                     // 清掉上次看门狗留下的「会话已关闭」标记，否则 start-xfce.sh 会直接退出
                     "rm -f " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/.session-closing; " +
                     // 先清掉上一会话残留的看门狗：它盯着已死的旧 App pid，
@@ -1003,7 +1015,8 @@ public final class LinuxLauncher {
                             + ROOTFS_DIR_PATH + "/mnt/download; " +
                     "chmod -R 777 " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/download-xfer 2>/dev/null; " +
                     "APP_UID=$(stat -c %u " + TermuxConstants.TERMUX_FILES_DIR_PATH + " 2>/dev/null); "
-                            + "[ -n \"$APP_UID\" ] || APP_UID=10183; "
+                            + "[ -n \"$APP_UID\" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null); "
+                            + "[ -n \"$APP_UID\" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\\([0-9][0-9]*\\).*/\\1/p' | head -1); "
                             + "chown -R \"$APP_UID:$APP_UID\" " + TermuxConstants.TERMUX_FILES_DIR_PATH
                             + "/download-xfer 2>/dev/null; " +
                     "grep -qs ' " + ROOTFS_DIR_PATH + "/mnt/download ' /proc/mounts || "
@@ -1031,6 +1044,10 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "install-desktop-icons.sh",
                     TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-desktop-icons.sh"); }
             catch (Exception e) { Log.e(TAG, "copy install-desktop-icons failed", e); }
+            // 面板「中英切换」按钮（fcitx5 托盘图标缺 StatusNotifier 宿主，用启动器替代）
+            try { copyAssetIfNeeded(ctx, "install-im-toggle.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-im-toggle.sh"); }
+            catch (Exception e) { Log.e(TAG, "copy install-im-toggle failed", e); }
             // Chrome 兼容 shim：非 root 下 proot -0 伪装 uid=0，Chrome 拒绝启动沙箱
             // （"Running as root without --no-sandbox is not supported"），
             // 由 start-xfce-noroot.sh 把它 bind 覆盖到 /usr/bin/google-chrome-stable
@@ -1056,7 +1073,15 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "linux-cleanup-noroot.sh", NOROOT_CLEANUP_SCRIPT); } catch (Exception e) {
                 Log.e(TAG, "copy linux-cleanup-noroot.sh failed", e);
             }
+            // v41: 启动诊断日志脚本（终端直接打印模式/rootfs 状态/日志路径）
+            String bootLog = TermuxConstants.TERMUX_FILES_DIR_PATH + "/boot-log.sh";
+            try { copyAssetIfNeeded(ctx, "boot-log.sh", bootLog); } catch (Exception e) {
+                Log.e(TAG, "copy boot-log.sh failed", e);
+            }
+            writeAppVersion(ctx); // v42: 横幅版本号不再硬编码
             String cmd =
+                    // 终端里先打印一段启动诊断信息，方便直接看当前状态
+                    "sh " + bootLog + " proot 2>/dev/null; " +
                     "rm -f " + TermuxConstants.TERMUX_FILES_DIR_PATH + "/.session-closing; " +
                     // 清掉上一会话（root 模式）残留的看门狗，防止它误杀本会话
                     // （按 pid 文件精确杀；见 chroot 分支注释，不能用 pkill -f）
@@ -1289,6 +1314,25 @@ public final class LinuxLauncher {
             if (dest.exists()) dest.delete();
             if (!tmp.renameTo(dest)) throw new IOException("rename failed");
             dest.setExecutable(true, false);
+        }
+    }
+
+    /**
+     * 把当前 APK 的 versionName 落到 $FILES/.app-version，供 boot-log.sh 直接读。
+     * v42：以前启动横幅里的版本号是硬编码在脚本里的，每发一版都得手工改，
+     * 漏改就会出现「装的是 v42、横幅写 v41」的迷惑现象。改为构建期注入、运行期读取。
+     */
+    private static void writeAppVersion(Context ctx) {
+        try {
+            String vn = ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0).versionName;
+            if (vn == null || vn.isEmpty()) return;
+            File f = new File(TermuxConstants.TERMUX_FILES_DIR_PATH, ".app-version");
+            try (FileOutputStream fos = new FileOutputStream(f, false)) {
+                fos.write(vn.getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "write .app-version failed", e);
         }
     }
 

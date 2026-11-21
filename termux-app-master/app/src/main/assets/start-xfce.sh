@@ -12,9 +12,15 @@ APK=$(cat /data/data/com.termux/files/.apk-path 2>/dev/null)
 [ -f "$APK" ] || APK=$(pm path com.termux 2>/dev/null | grep -v split | head -1 | sed 's/package://')
 TH=/data/data/com.termux/files/home
 FD=/data/data/com.termux/files
-# App uid 动态获取（格式化重装后可能不是 10183）；com.termux 数据目录属主即 App uid
+# App uid 动态获取：每台设备/每次重装都可能不同，禁止写死（10183 只是历史值）。
+# 解析顺序：files 目录属主 → 数据目录属主 → pm 输出的 uid: 字段
 APP_UID=$(stat -c %u "$FD" 2>/dev/null)
-[ -n "$APP_UID" ] || APP_UID=10183
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
+if [ -z "$APP_UID" ]; then
+  echo "错误：无法确定 com.termux 的 uid，中止启动"
+  exit 1
+fi
 mkdir -p "$FD/log" 2>/dev/null; chown "$APP_UID:$APP_UID" "$FD/log" 2>/dev/null
 
 # -1) 关键：App 被拉起时处在它自己的 mount namespace 里，
@@ -35,6 +41,16 @@ if [ -f "$FD/.session-closing" ]; then
   echo "session-closing flag present, abort"
   exit 0
 fi
+
+# 0.3) 清理 Android 原生命名空间残留的 fcitx5/chrome：
+#      从 proot 模式切换到 root 模式时，旧 proot 会话的 fcitx5/chrome 可能在
+#      Android 原生命名空间残留（root=/ 而非 chroot），它们的 DISPLAY 与
+#      新 root 会话冲突 → 输入法不生效 / Chrome profile 锁冲突。
+#      chroot 内的 start-desktop.sh 看不到这些进程，必须在 Android 侧清理。
+pkill -9 -x fcitx5 2>/dev/null
+pkill -9 -x chrome 2>/dev/null
+pkill -9 -f "google-chrome" 2>/dev/null
+sleep 0.5
 
 # 0.4) uid 自适应（跨设备通用）：不同设备/格式化重装后 com.termux 的 uid 可能不同，
 #      rootfs 包里的 passwd 属主是打包设备的旧 uid → chroot 里 su - alan 切到旧 uid，
@@ -124,6 +140,15 @@ if ! pgrep -f '[d]ownload-sync.sh' >/dev/null 2>&1; then
 fi
 
 # 2) X server 未运行则启动
+#    注意：进程存在但 socket 没建 = 卡死的僵尸 X（表现为一直黑屏）。
+#    以前只判断 pgrep，僵尸进程会让这里直接跳过启动，桌面永远起不来。
+if pgrep -f "termux-x11" >/dev/null 2>&1 && [ ! -S "$R/tmp/.X11-unix/X0" ]; then
+  echo "检测到僵尸 X server（有进程无 socket），清理重启"
+  pkill -9 -f "termux-x11" 2>/dev/null
+  pkill -9 -f "CmdEntryPoint" 2>/dev/null
+  sleep 1
+  rm -f "$R/tmp/.X0-lock" "$R/tmp/.X11-unix/X0" 2>/dev/null
+fi
 if ! pgrep -f "termux-x11" >/dev/null 2>&1; then
   # 清掉上次残留的锁和 socket（否则 X 会因"Server is already active"直接退出）
   rm -f "$R/tmp/.X0-lock" "$R/tmp/.X11-unix/X0" 2>/dev/null
@@ -222,6 +247,11 @@ fi
 if [ -f "$FD/install-desktop-icons.sh" ]; then
   cp -f "$FD/install-desktop-icons.sh" "$R/root/install-desktop-icons.sh"
   chmod 755 "$R/root/install-desktop-icons.sh"
+fi
+# 面板「中英切换」按钮安装脚本（fcitx5 托盘图标缺 StatusNotifier 宿主）
+if [ -f "$FD/install-im-toggle.sh" ]; then
+  cp -f "$FD/install-im-toggle.sh" "$R/root/install-im-toggle.sh"
+  chmod 755 "$R/root/install-im-toggle.sh"
 fi
 
 # 5) chroot 里启动 sshd + XFCE（普通用户 alan）+ 输入法

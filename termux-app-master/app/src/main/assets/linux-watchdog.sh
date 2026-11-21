@@ -14,7 +14,10 @@ PIDFILE="$FILES/.linux-watchdog.pid"
 CLOSING_FLAG="$FILES/.session-closing"
 CLEANUP="$FILES/linux-cleanup.sh"
 LOG=/data/data/com.termux/files/log/watchdog.log
-APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null); [ -n "$APP_UID" ] || APP_UID=10183
+# App uid 动态解析：不同设备/重装会变，禁止写死 10183
+APP_UID=$(stat -c %u /data/data/com.termux/files 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
 mkdir -p /data/data/com.termux/files/log; chown "$APP_UID:$APP_UID" /data/data/com.termux/files/log 2>/dev/null
 
 log() { echo "$(date '+%m-%d %H:%M:%S') $*" >> "$LOG"; }
