@@ -17,6 +17,16 @@ BUS=/tmp/xfce-bus
 SENV=/root/.runtime/session.env
 mkdir -p /root/.runtime && chmod 700 /root/.runtime
 
+# 日志一律落在 $HOME/.runtime（该目录属主是 App uid）。
+# 以前用 /tmp/xfce.log：root 模式的会话先写过这个文件后它变成 root:root 644，
+# 而 /tmp 是 1777 带 sticky，普通用户既不能覆盖也不能删 →
+# `nohup xfwm4 >/tmp/xfce.log` 的重定向直接失败，命令整条被跳过（铁律 5），
+# 结果是 dbus/fcitx/panel 全都没起来，桌面黑屏还查不到原因。
+LOG=/root/.runtime
+for f in xfce.log dbus.log; do
+  [ -w "$LOG/$f" ] || rm -f "$LOG/$f" 2>/dev/null
+done
+
 # 0) DNS 兜底：proot 下若 /etc/resolv.conf 不可写（root 属主），放一份到 /tmp 再 bind 太重，
 #    直接试写，写不进去就用现有的
 if [ ! -s /etc/resolv.conf ]; then
@@ -32,7 +42,7 @@ fi
 # 2) 固定地址的会话总线（Chrome/fcitx5 都靠它接上，与 root 版同思路）
 if ! pgrep -f "dbus-daemon --session" >/dev/null 2>&1; then
   rm -f "$BUS" /tmp/dbus-* 2>/dev/null
-  dbus-daemon --session --fork --address=unix:path=$BUS --print-address=0 >/tmp/dbus.info 2>&1
+  dbus-daemon --session --fork --address=unix:path=$BUS --print-address=0 >>"$LOG/dbus.log" 2>&1
   sleep 0.5
 fi
 printf 'export DBUS_SESSION_BUS_ADDRESS=unix:path=%s\nexport PULSE_SERVER=%s\n' "$BUS" "$PULSE" > "$SENV"
@@ -61,16 +71,19 @@ if ! pgrep -x xfdesktop >/dev/null 2>&1; then
          GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx \
          SDL_IM_MODULE=fcitx SHELL=/bin/bash TERM=xterm-256color \
          PULSE_SERVER=$PULSE
+  # 桌面图标 / 默认浏览器 / 输入法自启：每次启动幂等补齐，
+  # 避免 rootfs 重新导入或恢复备份后 ~/Desktop 变空（表现为"没有浏览器"）
+  [ -x /root/install-desktop-icons.sh ] && /root/install-desktop-icons.sh /root >>"$LOG/icons.log" 2>&1
   xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false 2>/dev/null
   xfconf-query -c xfce4-session -p /general/SaveOnExit -n -t bool -s false 2>/dev/null
   rm -rf /root/.cache/sessions/* 2>/dev/null
-  nohup xfsettingsd >/tmp/xfce.log 2>&1 &
+  nohup xfsettingsd >>"$LOG/xfce.log" 2>&1 &
   sleep 1
-  nohup xfwm4 --replace >/tmp/xfce.log 2>&1 &
+  nohup xfwm4 --replace >>"$LOG/xfce.log" 2>&1 &
   sleep 1
-  nohup xfce4-panel >/tmp/xfce.log 2>&1 &
-  nohup xfdesktop >/tmp/xfce.log 2>&1 &
-  nohup thunar --daemon >/dev/null 2>&1 &
+  nohup xfce4-panel >>"$LOG/xfce.log" 2>&1 &
+  nohup xfdesktop >>"$LOG/xfce.log" 2>&1 &
+  nohup thunar --daemon >>/dev/null 2>&1 &
   echo "桌面已启动（proot 伪装 root，配置取自 /home/alan）"
 else
   echo "桌面已在运行"

@@ -112,6 +112,14 @@ mkdir -p "$R/home/alan/.runtime" 2>>"$LOG"
 chown -R "$APP_UID:$APP_UID" "$R/home/alan/.runtime" 2>>"$LOG"
 chmod 700 "$R/home/alan/.runtime" 2>>"$LOG"
 
+echo "== 9. SELinux 标签对齐（否则非 root 模式读不到 rootfs） =="
+# 以 root 解压出来的文件标签只有 app_data_file:s0，没有 App 的 MLS 类别，
+# App 进程（untrusted_app:s0:c…）能 stat 但 open 被拒 → proot 报 '/bin/bash' not found。
+# fix_selinux.sh 内部自带「仍有挂载则中止」护栏，标签已一致会立刻退出。
+if [ -f "$FD/fix_selinux.sh" ]; then
+  sh "$FD/fix_selinux.sh" >>"$LOG" 2>&1 && echo "标签已对齐" || echo "标签修复失败，见日志"
+fi
+
 echo "== 结果 =="
 for f in usr/bin/sudo usr/bin/su usr/bin/passwd etc/shadow etc/sudoers etc/sudoers.d/alan root home/alan usr/bin tmp; do
   printf "%-22s " "$f"; stat -c "%u:%g %a" "$R/$f" 2>>"$LOG" || echo missing

@@ -51,6 +51,23 @@ fi
 # 2) 会话运行时目录（必须归该用户且 700，否则 fcitx5/dbus 会报权限错）
 install -d -m 700 -o "$U" -g "$U" "$UH/.runtime"
 
+# 2.01) 日志文件先建成 alan 属主：root 直接重定向新建出来的是 root:root，
+#        切到非 root（proot）模式后 alan 既盖不了也删不掉，重定向失败 → 命令被跳过。
+for lf in xfce.log dbus.log icons.log; do
+  [ -f "$UH/.runtime/$lf" ] || : > "$UH/.runtime/$lf"
+  chown "$U:$U" "$UH/.runtime/$lf" 2>/dev/null
+  chmod 644 "$UH/.runtime/$lf" 2>/dev/null
+done
+
+# 2.0) 桌面图标 / 默认浏览器 / 输入法自启（幂等）。
+#      rootfs 被重新导入或从备份恢复后 ~/Desktop 会变空，用户就"找不到浏览器和输入法"，
+#      每次启动补一份，从此不会再丢。
+#      日志写进 $UH/.runtime —— 写 /tmp 会在切换非 root 模式后变成 root 属主文件，
+#      挡住 proot 会话的重定向（导致桌面组件一个都不启动）。
+if [ -x /root/install-desktop-icons.sh ]; then
+  /root/install-desktop-icons.sh "$UH" >> "$UH/.runtime/icons.log" 2>&1
+fi
+
 # 2.1) 终端默认工作目录 = ~（图标启动的终端会继承 xfdesktop 的 CWD，这里强制回 ~）
 install -d -m 700 -o "$U" -g "$U" "$UH/.config/xfce4/terminal"
 TRC="$UH/.config/xfce4/terminal/terminalrc"
@@ -74,13 +91,13 @@ if ! pgrep -u "$U" -x xfce4-session >/dev/null 2>&1; then
   rm -f "$BUS" /tmp/dbus-*
   sleep 0.3
   # 必须由该用户启动：socket 属主若是 root，普通用户连不上，fcitx5 会直接退出
-  su - "$U" -c "dbus-daemon --session --fork --address=unix:path=$BUS --print-address=0" >/tmp/dbus.info 2>&1
+  su - "$U" -c "dbus-daemon --session --fork --address=unix:path=$BUS --print-address=0" >"$UH/.runtime/dbus.log" 2>&1
   sleep 0.5
   printf 'export DBUS_SESSION_BUS_ADDRESS=unix:path=%s\nexport PULSE_SERVER=%s\n' "$BUS" "$PULSE" > "$SENV"
   chown "$U:$U" "$SENV" 2>/dev/null
   chmod 644 "$SENV"
 
-  su - "$U" -c "export DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS DISPLAY=:0 XDG_RUNTIME_DIR=$UH/.runtime PULSE_SERVER=$PULSE SHELL=/bin/bash TERM=xterm-256color GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx SDL_IM_MODULE=fcitx; unset XAUTHORITY; cd $UH; xfconf-query -c xfce4-session -p /general/SaveOnExit -n -t bool -s false 2>/dev/null; rm -rf $UH/.cache/sessions/* 2>/dev/null; exec startxfce4" >/tmp/xfce.log 2>&1 &
+  su - "$U" -c "export DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS DISPLAY=:0 XDG_RUNTIME_DIR=$UH/.runtime PULSE_SERVER=$PULSE SHELL=/bin/bash TERM=xterm-256color GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx SDL_IM_MODULE=fcitx; unset XAUTHORITY; cd $UH; xfconf-query -c xfce4-session -p /general/SaveOnExit -n -t bool -s false 2>/dev/null; rm -rf $UH/.cache/sessions/* 2>/dev/null; exec startxfce4" >"$UH/.runtime/xfce.log" 2>&1 &
   echo "桌面已启动（用户 $U）"
   sleep 3
 

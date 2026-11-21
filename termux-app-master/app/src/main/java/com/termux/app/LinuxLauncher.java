@@ -8,6 +8,7 @@ import android.util.Log;
 import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -846,6 +847,16 @@ public final class LinuxLauncher {
         writeStatus("prepare called, rooted=" + rooted);
         File rootfs = new File(ROOTFS_DIR_PATH);
 
+        // --- Step 0: 共享杂项 ---
+        // ① 把自己的 APK 路径写下来。启动脚本（尤其非 root 模式）要拿它当
+        //    app_process 的 CLASSPATH 去起 X server，而 App 域里执行
+        //    `pm path com.termux` 会失败（Failed transaction 2147483646），
+        //    结果 CLASSPATH 变成错误文本 → X server 静默死亡 → 桌面黑屏。
+        writeApkPath(ctx);
+        // ② SELinux 标签修复脚本要先落地，Step 1.5 就要用它
+        try { copyAssetIfNeeded(ctx, "fix_selinux.sh", SELINUX_SCRIPT); }
+        catch (Exception e) { Log.e(TAG, "copy fix_selinux.sh failed", e); }
+
         // --- Step 1: extract rootfs if not done yet ---
         // 就绪判断不能依赖“自己写的标记文件”：tar -p 以 root 解压会把顶层目录
         // 改成 root:root，App 进程没权限往里写标记（EACCES），一旦标记写失败
@@ -866,6 +877,12 @@ public final class LinuxLauncher {
             }
         }
 
+        // --- Step 1.5: rootfs 的 SELinux 类别纠正 ---
+        // 以 root 解压/恢复出来的 rootfs 标签是 app_data_file:s0（没有 App 的 MLS 类别），
+        // App 进程 stat 得到但 open 被拒 → proot 报 '/bin/bash' not found → 桌面黑屏。
+        // 放在解压之后、启动之前；已有 root 权限时幂等（标签一致直接跳过）。
+        ensureSelinuxLabels(rooted);
+
         // --- Step 2: decide executable + args ---
         if (rooted) {
             // 复制桌面启动脚本（Android 侧：起 X server / 显示 Activity / 音频 / chroot 起 XFCE）
@@ -878,6 +895,10 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "start-desktop.sh", innerScript); } catch (Exception e) {
                 Log.e(TAG, "copy start-desktop.sh failed", e);
             }
+            // 桌面图标安装脚本（由 start-desktop.sh 拷进 chroot 后调用）
+            try { copyAssetIfNeeded(ctx, "install-desktop-icons.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-desktop-icons.sh"); }
+            catch (Exception e) { Log.e(TAG, "copy install-desktop-icons failed", e); }
             // Termux 侧依赖（pulseaudio / termux-api）：国内源不可用，随包分发
             // 注意 asset 名必须用 .bin：aapt 会把 .tar.gz 自动解压并改名，导致 open() 失败
             String pkgsTar = TermuxConstants.TERMUX_FILES_DIR_PATH + "/termux-pkgs.tar.gz";
@@ -985,6 +1006,10 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "start-desktop-noroot.sh", NOROOT_DESKTOP_SCRIPT); } catch (Exception e) {
                 Log.e(TAG, "copy start-desktop-noroot.sh failed", e);
             }
+            // 桌面图标安装脚本：同样 bind 进 proot 的 /root（rootfs 重新导入后 ~/Desktop 会空）
+            try { copyAssetIfNeeded(ctx, "install-desktop-icons.sh",
+                    TermuxConstants.TERMUX_FILES_DIR_PATH + "/install-desktop-icons.sh"); }
+            catch (Exception e) { Log.e(TAG, "copy install-desktop-icons failed", e); }
             // Chrome 兼容 shim：非 root 下 proot -0 伪装 uid=0，Chrome 拒绝启动沙箱
             // （"Running as root without --no-sandbox is not supported"），
             // 由 start-xfce-noroot.sh 把它 bind 覆盖到 /usr/bin/google-chrome-stable
@@ -1108,6 +1133,114 @@ public final class LinuxLauncher {
         } catch (Exception e) {
             Log.e(TAG, "fix_perms failed", e);
             writeStatus("fix_perms failed: " + e.getMessage());
+        }
+    }
+
+    /** APK 路径缓存文件：启动脚本用它当 app_process 的 CLASSPATH（不依赖 pm 命令） */
+    public static final String APK_PATH_FILE =
+            TermuxConstants.TERMUX_FILES_DIR_PATH + "/.apk-path";
+    /** SELinux 标签修复脚本 */
+    private static final String SELINUX_SCRIPT =
+            TermuxConstants.TERMUX_FILES_DIR_PATH + "/fix_selinux.sh";
+
+    /**
+     * 把本 APK 的绝对路径写到 $FILES_DIR/.apk-path。
+     *
+     * 为什么不用 `pm path com.termux`：App 自己拉起的 shell 处于 untrusted_app 域，
+     * `pm path` 会返回 "cmd: Failure calling service package: Failed transaction"，
+     * 启动脚本把它当 CLASSPATH 传给 app_process → X server 起不来（日志还是空的）
+     * → proot 里没有 X socket → 桌面黑屏。这个文件是唯一可靠的来源。
+     */
+    private static void writeApkPath(Context ctx) {
+        try {
+            String apk = ctx.getApplicationInfo().sourceDir;
+            if (apk == null || apk.isEmpty()) return;
+            File f = new File(APK_PATH_FILE);
+            String old = null;
+            if (f.exists()) {
+                try (InputStream in = new FileInputStream(f)) {
+                    old = readAll(in).trim();
+                } catch (Exception ignored) {}
+            }
+            if (!apk.equals(old)) {
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write(apk.getBytes());
+                }
+                // App 自己写的文件天然是 App 属主，这里只是保证可读
+                f.setReadable(true, false);
+            }
+            Log.i(TAG, "apk path -> " + apk);
+        } catch (Exception e) {
+            Log.w(TAG, "writeApkPath failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 探测 rootfs 的 SELinux 标签是否与 App 进程匹配。
+     *
+     * 不能只试"读一个字节"：MLS 类别不匹配时普通文件仍然可 read，
+     * 但 **符号链接的 read（readlink）和 ELF 的 execute 会被拒**。
+     * 而 proot 的第一步就是把 guest 的 /bin 解析出来（readlink），
+     * 于是表现成 proot error: '/bin/bash' not found —— 文件明明在。
+     * 所以这里直接试 readlink(rootfs/bin)，这正是真正会失败的那一步。
+     */
+    private static boolean rootfsLabelsOk() {
+        // 注意：这里**不能**用 bin.exists() 当门禁。exists() 走 access(F_OK)，
+        // 同样要解析符号链接 → 标签不匹配时它直接返回 false，
+        // 于是会被误判成"rootfs 还没导入"而放过检测（踩过一次）。
+        File rootfs = new File(ROOTFS_DIR_PATH);
+        if (!rootfs.isDirectory()) return true;
+        File bin = new File(rootfs, "bin");
+        try {
+            String target = android.system.Os.readlink(bin.getAbsolutePath());
+            return target != null && !target.isEmpty();
+        } catch (android.system.ErrnoException e) {
+            if (e.errno == android.system.OsConstants.EACCES) {
+                Log.w(TAG, "readlink(" + bin + ") denied -> SELinux 类别不匹配");
+                return false;
+            }
+            // EINVAL（不是符号链接）/ ENOENT：退回读文件探测
+        } catch (Throwable ignored) {}
+        File probe = new File(rootfs, "etc/passwd");
+        try (InputStream in = new FileInputStream(probe)) {
+            in.read();
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "rootfs probe failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 纠正 rootfs 的 SELinux 标签（详见 assets/fix_selinux.sh 的根因说明）。
+     *
+     * - root 模式：本来就是 root，直接修；
+     * - 非 root 模式：只有 App 读不到 rootfs 且确实拿得到 su 时才修
+     *   （读得到说明标签是好的，不去打扰用户；读不到说明这次桌面 100% 起不来）。
+     */
+    private static void ensureSelinuxLabels(boolean rooted) {
+        if (!new File(ROOTFS_DIR_PATH).isDirectory()) return;
+        if (rooted) {
+            // root 侧幂等：脚本内部标签一致会立刻退出，开销只有一次 stat
+        } else {
+            if (rootfsLabelsOk()) return;
+            if (!isSuAvailable()) {
+                // 没有 root 就改不了标签：把结论写清楚，桌面起不来时不用再猜
+                writeStatus("rootfs SELinux 标签不匹配且无 su，proot 必然失败："
+                        + "请先切到 root 模式启动一次以自动修复");
+                return;
+            }
+            Log.i(TAG, "rootfs SELinux 标签不匹配，尝试用 su 修正");
+            writeStatus("rootfs labels mismatch -> relabel via su");
+        }
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{suBinary(), "-c", "sh " + SELINUX_SCRIPT});
+            String out = readAll(p.getInputStream());
+            p.waitFor(300, TimeUnit.SECONDS);
+            Log.i(TAG, "fix_selinux: " + out);
+            writeStatus("fix_selinux done");
+        } catch (Exception e) {
+            Log.w(TAG, "fix_selinux failed: " + e.getMessage());
         }
     }
 

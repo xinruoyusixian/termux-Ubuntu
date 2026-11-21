@@ -7,7 +7,9 @@ export PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin
 R=/data/data/com.termux/files/ubuntu
 P=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # X11 已并入 com.termux，APK 路径取 base.apk（过滤 split）
-APK=$(pm path com.termux | grep -v split | head -1 | sed 's/package://')
+# 优先用 App 自己写下的 .apk-path：不依赖 pm 命令（App 域里 pm path 可能直接失败）
+APK=$(cat /data/data/com.termux/files/.apk-path 2>/dev/null)
+[ -f "$APK" ] || APK=$(pm path com.termux 2>/dev/null | grep -v split | head -1 | sed 's/package://')
 TH=/data/data/com.termux/files/home
 FD=/data/data/com.termux/files
 # App uid 动态获取（格式化重装后可能不是 10183）；com.termux 数据目录属主即 App uid
@@ -56,7 +58,7 @@ chmod 755 "$R/run" 2>/dev/null
 #    Android 的 toybox 没有 mountpoint，用 /proc/mounts 判断，否则会每次都重复 mount
 ismount() { grep -qs " $1 " /proc/mounts; }
 # 打包时排除了 /proc /sys /dev（虚拟文件系统），首次运行要自己建挂载点
-mkdir -p "$R/proc" "$R/sys" "$R/dev" "$R/dev/pts"
+mkdir -p "$R/proc" "$R/sys" "$R/dev"
 ismount "$R/proc"    || mount -t proc proc "$R/proc"
 ismount "$R/sys"     || mount -t sysfs sysfs "$R/sys"
 
@@ -88,6 +90,10 @@ if ! ismount "$R/dev"; then
   fi
 fi
 # devpts 独立挂载（虚拟 FS，穿透删除无副作用），不再 bind
+# 注意顺序：dev/pts 必须在 /dev 的 tmpfs 挂好之后才 mkdir，
+# 否则建在 tmpfs 底下被挂载覆盖 → mount 报 "No such file or directory"，
+# chroot 里没有 /dev/pts，终端/ssh/会话都会异常。
+[ -d "$R/dev/pts" ] || mkdir -p "$R/dev/pts"
 ismount "$R/dev/pts" || mount -t devpts -o mode=600,ptmxmode=666 devpts "$R/dev/pts"
 mkdir -p "$R/dev/shm"
 ismount "$R/dev/shm" || mount -t tmpfs -o size=1g,mode=1777 tmpfs "$R/dev/shm"
@@ -210,6 +216,12 @@ fi
 if [ -f "$FD/start-desktop.sh" ]; then
   cp -f "$FD/start-desktop.sh" "$R/root/start-desktop.sh"
   chmod 755 "$R/root/start-desktop.sh"
+fi
+# 桌面图标安装脚本也带进去：rootfs 重新导入/恢复备份后 ~/Desktop 会变空，
+# 每次启动都由 start-desktop.sh 调它补齐（浏览器 / 中英切换 / 终端 / 文件管理）
+if [ -f "$FD/install-desktop-icons.sh" ]; then
+  cp -f "$FD/install-desktop-icons.sh" "$R/root/install-desktop-icons.sh"
+  chmod 755 "$R/root/install-desktop-icons.sh"
 fi
 
 # 5) chroot 里启动 sshd + XFCE（普通用户 alan）+ 输入法
