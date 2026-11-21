@@ -68,10 +68,35 @@ echo "== 9. python / pip 缓存 =="
 rm -rf "$R/root/.cache"/* "$R/home/alan/.cache"/* 2>/dev/null
 rm -rf "$R/root/.local/lib"/*/__pycache__ 2>/dev/null
 
-echo "== 10. 校验关键文件仍在 =="
-for f in /usr/bin/xfce4-session /usr/bin/fcitx5 /opt/google/chrome/chrome /usr/bin/python3 /home/alan/Desktop; do
+echo "== 10. 调试残留与运行期痕迹（v42 补）=="
+# /root 下历次排查手工推上去的一次性脚本，全部属于调试垃圾。
+# 注意保留 install-im-toggle.sh / install-desktop-icons.sh：
+# start-desktop.sh 每次启动都会从这两个文件落地面板按钮和桌面图标。
+for f in _t_chrome.sh fix-desktop.sh ime-setup installdesktop.sh \
+         launch-chrome.sh redraw.sh start-desktop.sh t_chrome.sh; do
+  rm -f "$R/root/$f" 2>/dev/null
+done
+# 运行期日志（含 Chrome 启动日志，里面有访问过的路径）与 X 会话凭据
+rm -f "$R/home/alan/.runtime"/*.log "$R/root/.runtime"/*.log 2>/dev/null
+rm -f "$R/home/alan/.runtime/session.env" "$R/root/.runtime/session.env" 2>/dev/null
+rm -f "$R/home/alan/.ICEauthority" "$R/root/.ICEauthority" 2>/dev/null
+rm -f "$R/home/alan/.Xauthority" "$R/root/.Xauthority" 2>/dev/null
+rm -f "$R/home/alan/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml" 2>/dev/null
+# 用户目录里指向 /sdcard 的下载软链接（不占空间，但会暴露本机路径）
+rm -f "$R/home/alan/下载"/*.zip "$R/home/alan/下载"/*.tar.gz 2>/dev/null
+rm -rf "$R/home/alan/图片/WeiXin" 2>/dev/null
+# apt 索引在装完系统后可由用户 apt update 重建，209M 不值得进发布包
+rm -rf "$R/var/lib/apt/lists"/* 2>/dev/null
+mkdir -p "$R/var/lib/apt/lists/partial"
+
+echo "== 11. 校验关键文件仍在 =="
+for f in /usr/bin/xfce4-session /usr/bin/fcitx5 /opt/google/chrome/chrome /usr/bin/python3 \
+         /home/alan/Desktop /usr/local/bin/chrome /usr/local/bin/im \
+         /root/install-im-toggle.sh /root/install-desktop-icons.sh \
+         /home/alan/.local/share/icons/im-toggle.svg; do
   [ -e "$R$f" ] && echo "OK  $f" || echo "MISS $f"
 done
+echo "ActiveByDefault: $(grep -s '^ActiveByDefault' "$R/home/alan/.config/fcitx5/config")"
 
 after=$(du -sk "$R/usr" "$R/opt" "$R/home" "$R/root" "$R/var" 2>/dev/null | awk '{s+=$1} END{print s}')
 echo "== 清理前 $(($before/1024))M -> 清理后 $(($after/1024))M，回收 $((($before-$after)/1024))M =="

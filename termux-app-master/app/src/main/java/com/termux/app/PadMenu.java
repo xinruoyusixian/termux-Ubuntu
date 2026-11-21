@@ -415,6 +415,19 @@ public final class PadMenu {
             return;
         }
 
+        // v42：没有「所有文件访问」时 /sdcard 读不了，先说清楚，别让用户等到解压报错。
+        // 这里不能用 preImportBlocker：重新导入时 rootfs 已经就绪，那个方法会直接放行。
+        if (!LinuxLauncher.hasStorageAccess(ctx)) {
+            new AlertDialog.Builder(ctx)
+                    .setTitle("需要先授权")
+                    .setMessage("读取 /sdcard 上的系统包需要「所有文件访问」权限，"
+                            + "否则解压会直接报 Permission denied。")
+                    .setNegativeButton("稍后", null)
+                    .setPositiveButton("去授权", (d, w) -> LinuxLauncher.openStorageSettings(ctx))
+                    .show();
+            return;
+        }
+
         new AlertDialog.Builder(ctx)
                 .setTitle("重新导入系统")
                 .setMessage("将从以下文件重新导入：\n" + ext.getAbsolutePath()

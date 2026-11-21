@@ -5,6 +5,8 @@ MODE="$1"
 FD=/data/data/com.termux/files
 R="$FD/ubuntu"
 LOG="$FD/log"
+# v42: 优先用 App 落盘的 uid
+U=$(tr -dc '0-9' < "$FD/.app-uid" 2>/dev/null)
 U=$(stat -c %u "$FD" 2>/dev/null)
 
 # 记录本次终端会话真正按哪个模式启动（供模式切换后校验；v41）

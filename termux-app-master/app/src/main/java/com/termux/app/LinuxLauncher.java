@@ -642,6 +642,47 @@ public final class LinuxLauncher {
     }
 
     /**
+     * 首次导入前的授权自检（v42）。返回 null 表示可以继续，否则返回要展示给用户的话。
+     *
+     * 为什么必须有这一步：全新安装的 App 一个权限都没有，`/sdcard` 整个读不了。
+     * 旧流程直接开解压，toybox tar 只会吐一句
+     * `tar: /sdcard/UbuntuXFCE/rootfs.tar.gz: Permission denied`，
+     * 用户看到的是「解压失败」，根本不知道要去开「所有文件访问」。
+     *
+     * 注意**不能**把「没有 root」当成阻断条件：设备可能压根没 root（KernelSU 没装/
+     * 没授权），这时本来就走 proot，而 proot 是在用户态伪装 uid 的，
+     * 以 App 身份解压完全可行（只是文件属主都是 App uid，容器内看到的是 root）。
+     */
+    public static String preImportBlocker(Context ctx) {
+        if (isRootfsReady()) return null;
+        if (!hasStorageAccess(ctx)) {
+            return "首次导入系统包需要「所有文件访问」权限。\n\n"
+                    + "没有它，App 读不到 /sdcard 上的系统包，解压会直接报 Permission denied。\n\n"
+                    + "点「去授权」把该权限打开，返回后会自动继续导入。";
+        }
+        return null;
+    }
+
+    /**
+     * 导入阶段的可读错误：把 toybox tar 的英文原文翻译成用户能执行的动作。
+     */
+    private static String explainExtractError(String err) {
+        String e = err == null ? "" : err;
+        if (e.contains("Permission denied")) {
+            return "读取系统包被系统拒绝：请到「设置 → 应用 → 本应用 → 权限」里打开"
+                    + "「所有文件访问」，或把系统包放到应用可读的位置后重试。";
+        }
+        if (e.contains("No space left")) {
+            return "存储空间不足，系统包解压需要约 3GB 空闲空间。";
+        }
+        if (e.contains("not found") || e.contains("No such file")) {
+            return "找不到系统包：请把 rootfs.tar.gz 放到 /sdcard/UbuntuXFCE/ 目录。";
+        }
+        return "系统包解压失败：" + e.trim();
+    }
+
+
+    /**
      * 清空已解压的系统（重新导入前调用）。
      *
      * 安全要点：rootfs 里可能正 bind 着 /dev、/proc、/sys、/mnt/sdcard。
@@ -765,11 +806,12 @@ public final class LinuxLauncher {
         for (String p : suPaths) {
             try {
                 if (new File(p).exists()) {
-                    if (sSuManagerVerified == null) {
+                    if (!suCacheValid()) {
                         synchronized (SU_VERIFY_LOCK) {
-                            if (sSuManagerVerified == null) {
+                            if (!suCacheValid()) {
                                 boolean works = verifySuWorks(p);
                                 sSuManagerVerified = works;
+                                sSuVerifiedAtMs = System.currentTimeMillis();
                                 Log.i(TAG, "su binary " + p + " live check -> " + works);
                                 writeStatus("su binary " + p + " works=" + works);
                             }
@@ -793,14 +835,15 @@ public final class LinuxLauncher {
                 } catch (Exception ignored) {}
             }
             if (managerSeen) {
-                if (sSuManagerVerified != null) {
+                if (suCacheValid()) {
                     Log.i(TAG, "Root manager present, cached su-works=" + sSuManagerVerified);
                     return sSuManagerVerified;
                 }
                 synchronized (SU_VERIFY_LOCK) {
-                    if (sSuManagerVerified == null) {
+                    if (!suCacheValid()) {
                         boolean works = verifySuWorks();
                         sSuManagerVerified = works;
+                        sSuVerifiedAtMs = System.currentTimeMillis();
                         writeStatus("manager installed, su -c id works=" + works);
                         Log.i(TAG, "Root manager present, live su check -> " + works);
                     }
@@ -814,6 +857,34 @@ public final class LinuxLauncher {
     /** 管理器已装但 su 可见性未知时的动态验证（带超时；进程生命周期内缓存）。 */
     private static final Object SU_VERIFY_LOCK = new Object();
     private static volatile Boolean sSuManagerVerified;
+    private static volatile long sSuVerifiedAtMs;
+
+    /** 否定结果只缓存这么久：用户在 KernelSU 里刚授权完，不该等重启 App 才生效 */
+    private static final long SU_NEGATIVE_TTL_MS = 15_000L;
+
+    /**
+     * v42：缓存是否仍可用。
+     *
+     * 以前这里是「进程生命周期内永久缓存」，于是出现一个很坑的现象：
+     * 首次启动 su 还没授权 → 实测 false 被永久记住 → 用户去 KernelSU 授权完回来，
+     * 点「切到 root 模式」仍然提示「此设备没有可用的 root」，只能杀 App 才行。
+     * 现在否定结果只缓存 15 秒，肯定结果长期有效。
+     */
+    private static boolean suCacheValid() {
+        Boolean v = sSuManagerVerified;
+        if (v == null) return false;
+        if (v) return true;
+        return System.currentTimeMillis() - sSuVerifiedAtMs < SU_NEGATIVE_TTL_MS;
+    }
+
+    /** 主动作废 su 探测缓存（模式切换、用户点「重新检测」时调用）。 */
+    public static void invalidateRootCache() {
+        synchronized (SU_VERIFY_LOCK) {
+            sSuManagerVerified = null;
+            sSuVerifiedAtMs = 0L;
+            sWorkingSuPath = null;
+        }
+    }
 
     private static boolean verifySuWorks() {
         return verifySuWorks("su");
@@ -857,6 +928,44 @@ public final class LinuxLauncher {
             } catch (Exception ignored) {}
         }
         return "su";
+    }
+
+    /** v42：rootfs 是否已经做过一次「root 属主校正」（见 ensureRootOwnership） */
+    private static final String PERMS_MARKER = ROOTFS_DIR_PATH + "/.rootfs-root-owned";
+    /** 标记内容带版本号：fix_perms 逻辑有改动时改这里，老系统会自动重跑一次 */
+    private static final String PERMS_MARKER_VERSION = "2";
+
+    /**
+     * v42：补一次 root 属主校正。
+     *
+     * 场景：设备一开始没 root（KernelSU 没装/没授权），系统包只能以 App uid 解压，
+     * 全盘文件属主都是 10xxx、权限被 umask 077 压成 700、setuid 位也被内核丢弃。
+     * 用户后来把 root 配好了再切 chroot，容器里 sudo/passwd/dbus-daemon 全部失效，
+     * 而且症状很隐蔽（sudo 只报「必须属于用户 ID 0 并且设置 setuid 位」）。
+     *
+     * 用标记文件做一次性校正。**标记必须在 fix_perms 真正成功后**才写：
+     * v42 第一版无条件写标记，而当时 fix_perms.sh 正被误写成 CRLF 跑不起来，
+     * 结果标记写了、权限没修，之后每次启动都跳过校正，sudo 永久坏掉。
+     */
+    private static void ensureRootOwnership(Context ctx) {
+        File marker = new File(PERMS_MARKER);
+        if (marker.exists()) {
+            try {
+                String v = new String(java.nio.file.Files.readAllBytes(marker.toPath()), "UTF-8").trim();
+                if (PERMS_MARKER_VERSION.equals(v)) return;
+            } catch (Exception ignored) {}
+        }
+        if (!isRootfsReady()) return;
+        writeStatus("root ownership not yet fixed, running fix_perms");
+        if (runFixPerms(ctx, true)) {
+            try {
+                try (FileOutputStream fos = new FileOutputStream(marker, false)) {
+                    fos.write(PERMS_MARKER_VERSION.getBytes("UTF-8"));
+                }
+            } catch (Exception ignored) {}
+        } else {
+            writeStatus("fix_perms FAILED, will retry next launch");
+        }
     }
 
     /**
@@ -903,6 +1012,11 @@ public final class LinuxLauncher {
         // App 进程 stat 得到但 open 被拒 → proot 报 '/bin/bash' not found → 桌面黑屏。
         // 放在解压之后、启动之前；已有 root 权限时幂等（标签一致直接跳过）。
         ensureSelinuxLabels(rooted);
+
+        // --- Step 1.6: root 属主校正（v42）---
+        // 系统包可能是「没有 root 时」以 App uid 导入的，之后才拿到 root。
+        // 那时 chroot 里 sudo/passwd 会因为属主和 setuid 位不对而失效，这里补一次。
+        if (rooted) ensureRootOwnership(ctx);
 
         // --- Step 2: decide executable + args ---
         if (rooted) {
@@ -962,7 +1076,7 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "boot-log.sh", bootLog); } catch (Exception e) {
                 Log.e(TAG, "copy boot-log.sh failed", e);
             }
-            writeAppVersion(ctx); // v42: 横幅版本号不再硬编码
+            writeAppInfo(ctx); // v42: 版本号不再硬编码 / v42: 同时落盘 uid
             // chroot needs /dev /proc /sys mounted inside rootfs.
             String mountCmd =
                     // 终端里先打印一段启动诊断信息，方便直接看当前状态
@@ -1078,7 +1192,7 @@ public final class LinuxLauncher {
             try { copyAssetIfNeeded(ctx, "boot-log.sh", bootLog); } catch (Exception e) {
                 Log.e(TAG, "copy boot-log.sh failed", e);
             }
-            writeAppVersion(ctx); // v42: 横幅版本号不再硬编码
+            writeAppInfo(ctx); // v42: 版本号不再硬编码 / v42: 同时落盘 uid
             String cmd =
                     // 终端里先打印一段启动诊断信息，方便直接看当前状态
                     "sh " + bootLog + " proot 2>/dev/null; " +
@@ -1143,42 +1257,71 @@ public final class LinuxLauncher {
         String err = "";
         if (rooted) {
             // -p 保留权限位；以 root 运行才能还原 uid/gid
-            String cmd = "/system/bin/tar xzpf '" + srcPath + "' -C '" + ROOTFS_DIR_PATH + "'";
-            Process p = Runtime.getRuntime().exec(new String[]{suBinary(), "-c", cmd});
-            err = readAll(p.getErrorStream());
-            code = p.waitFor();
-            Log.i(TAG, "tar(root) exit=" + code + " err=" + err);
-            writeStatus("tar(root) exit=" + code + " " + err.substring(0, Math.min(160, err.length())));
+            // v42：这里必须 try/catch —— KernelSU 没给新 UID 授权时，
+            // exec("su") 直接抛 EACCES（Cannot run program "su": error=13），
+            // 旧代码让它冒泡出去，整个导入就失败了，连 app 用户兜底都走不到。
+            try {
+                String cmd = "/system/bin/tar xzpf '" + srcPath + "' -C '" + ROOTFS_DIR_PATH + "'";
+                Process p = Runtime.getRuntime().exec(new String[]{suBinary(), "-c", cmd});
+                err = readAll(p.getErrorStream());
+                code = p.waitFor();
+                Log.i(TAG, "tar(root) exit=" + code + " err=" + err);
+                writeStatus("tar(root) exit=" + code + " " + err.substring(0, Math.min(160, err.length())));
+            } catch (Exception e) {
+                Log.w(TAG, "root tar unavailable, fallback to app uid: " + e.getMessage());
+                writeStatus("tar(root) unavailable: " + e.getMessage());
+                code = -1;
+                err = "";
+            }
         }
         if (code != 0) {
-            // 兜底：以 app 用户解压，随后 fix_perms 校正属主与权限
+            // 兜底：以 app 用户解压，随后 fix_perms 校正属主与权限。
+            // 没有 root 的设备只有这一条路（proot 会在用户态伪装 uid，属主不重要）。
             Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/tar", "xzf", srcPath, "-C", ROOTFS_DIR_PATH});
             err = readAll(p.getErrorStream());
             code = p.waitFor();
             Log.i(TAG, "tar(app) exit=" + code + " err=" + err);
             writeStatus("tar(app) exit=" + code + " " + err.substring(0, Math.min(160, err.length())));
         }
-        if (code != 0) throw new IOException("系统包解压失败（tar exit " + code + "）：" + err);
+        // v42：不再把 tar 的英文原文直接甩给用户
+        if (code != 0) throw new IOException(explainExtractError(err));
 
-        runFixPerms(ctx, rooted);
+        // 以 root 解压时顺手校正一次；成功才写标记（失败留给下次启动重试）
+        if (runFixPerms(ctx, rooted)) {
+            try {
+                try (FileOutputStream fos = new FileOutputStream(PERMS_MARKER, false)) {
+                    fos.write(PERMS_MARKER_VERSION.getBytes("UTF-8"));
+                }
+            } catch (Exception ignored) {}
+        }
 
         if (fromAsset) src.delete();
     }
 
     /** 解压后统一校正属主 / 权限 / setuid（以 root 执行 fix_perms.sh） */
-    private static void runFixPerms(Context ctx, boolean rooted) {
-        if (!rooted) return;
+    /** @return true 表示 fix_perms 真的跑完且退出码为 0（调用方据此决定是否写标记） */
+    private static boolean runFixPerms(Context ctx, boolean rooted) {
+        if (!rooted) return false;
         try {
             String dst = TermuxConstants.TERMUX_FILES_DIR_PATH + "/fix_perms.sh";
             copyAssetIfNeeded(ctx, "fix_perms.sh", dst);
             Process p = Runtime.getRuntime().exec(new String[]{suBinary(), "-c", "sh " + dst});
             String out = readAll(p.getInputStream());
-            p.waitFor(600, TimeUnit.SECONDS);
-            Log.i(TAG, "fix_perms output: " + out);
-            writeStatus("fix_perms done");
+            boolean finished = p.waitFor(600, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                writeStatus("fix_perms timeout");
+                return false;
+            }
+            int code = p.exitValue();
+            Log.i(TAG, "fix_perms output: " + out + " exit=" + code);
+            writeStatus("fix_perms exit=" + code);
+            // 退出码 + 输出双重确认：脚本被写坏（比如 CRLF）时 toybox 会以非 0 退出
+            return code == 0 && out.contains("fix_perms done");
         } catch (Exception e) {
             Log.e(TAG, "fix_perms failed", e);
             writeStatus("fix_perms failed: " + e.getMessage());
+            return false;
         }
     }
 
@@ -1318,21 +1461,36 @@ public final class LinuxLauncher {
     }
 
     /**
-     * 把当前 APK 的 versionName 落到 $FILES/.app-version，供 boot-log.sh 直接读。
-     * v42：以前启动横幅里的版本号是硬编码在脚本里的，每发一版都得手工改，
-     * 漏改就会出现「装的是 v42、横幅写 v41」的迷惑现象。改为构建期注入、运行期读取。
+     * 把当前 APK 的 versionName 和 uid 落到 $FILES/ 下，供启动脚本直接读。
+     *
+     * v42：启动横幅里的版本号以前硬编码在脚本里，每发一版都得手改，漏改就会出现
+     * 「装的是 v42、横幅写 v41」。
+     * v42：uid 也一起落盘。App 用 Process.myUid() 拿自己的 uid 是零成本且绝对正确的，
+     * 而 shell 侧只能靠 stat 目录属主 / `pm list packages -U` 反推 —— 卸载重装后
+     * uid 会变（实测 10167 → 10183），反推链路任何一环出错都会把 rootfs 属主搞错。
      */
-    private static void writeAppVersion(Context ctx) {
+    private static void writeAppInfo(Context ctx) {
         try {
             String vn = ctx.getPackageManager()
                     .getPackageInfo(ctx.getPackageName(), 0).versionName;
-            if (vn == null || vn.isEmpty()) return;
-            File f = new File(TermuxConstants.TERMUX_FILES_DIR_PATH, ".app-version");
-            try (FileOutputStream fos = new FileOutputStream(f, false)) {
-                fos.write(vn.getBytes("UTF-8"));
+            if (vn != null && !vn.isEmpty()) {
+                File f = new File(TermuxConstants.TERMUX_FILES_DIR_PATH, ".app-version");
+                try (FileOutputStream fos = new FileOutputStream(f, false)) {
+                    fos.write(vn.getBytes("UTF-8"));
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "write .app-version failed", e);
+        }
+        try {
+            int uid = android.os.Process.myUid();
+            File f = new File(TermuxConstants.TERMUX_FILES_DIR_PATH, ".app-uid");
+            try (FileOutputStream fos = new FileOutputStream(f, false)) {
+                fos.write(String.valueOf(uid).getBytes("UTF-8"));
+            }
+            f.setReadable(true, false);
+        } catch (Exception e) {
+            Log.e(TAG, "write .app-uid failed", e);
         }
     }
 

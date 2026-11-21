@@ -53,7 +53,10 @@ sleep 1
 # root 会话里若 PulseAudio 被 root 身份起过一次，$FILES/home/.pulse-rt 会变成 root:root。
 # 切到非 root（proot）后 App uid 无法写这个目录，PulseAudio 直接 EACCES（表现为完全无声）。
 # 本脚本以 root 运行，按 App 数据目录的属主删掉重建，保证两个方向的切换后都归 App uid。
-APP_UID=$(stat -c %u "$FILES" 2>/dev/null)
+# v42: 优先读 App 落盘的 .app-uid（Process.myUid()）。App 自己最清楚自己的 uid，
+# 比外面 stat/pm 反推可靠，也不受「卸载重装换 uid」影响。
+APP_UID=$(tr -dc '0-9' < "$FILES/.app-uid" 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u "$FILES" 2>/dev/null)
 APP_GID=$(stat -c %g "$FILES" 2>/dev/null)
 [ -n "$APP_GID" ] || APP_GID="$APP_UID"
 PULSE_RT="$FILES/home/.pulse-rt"

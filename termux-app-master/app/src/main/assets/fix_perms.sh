@@ -11,7 +11,10 @@ mkdir -p "$FD/log"
 [ -d "$R/etc" ] || { echo "no rootfs"; exit 1; }
 # 当前设备 App uid（跨设备/重装会变，一律动态取，禁止写死 10183）
 # 解析顺序：files 目录属主 → 数据目录属主 → pm 输出的 uid: 字段
-APP_UID=$(stat -c %u /data/data/com.termux/files 2>>"$LOG")
+# v42: 优先读 App 落盘的 .app-uid（Process.myUid()）。App 自己最清楚自己的 uid，
+# 比外面 stat/pm 反推可靠，也不受「卸载重装换 uid」影响。
+APP_UID=$(tr -dc '0-9' < "/data/data/com.termux/files/.app-uid" 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux/files 2>>"$LOG")
 [ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>>"$LOG")
 [ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
 if [ -z "$APP_UID" ]; then

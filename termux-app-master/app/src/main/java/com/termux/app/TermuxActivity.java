@@ -443,6 +443,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return;
             }
         }
+        // v42：首次导入前先做授权自检。全新安装的 App 没有「所有文件访问」，
+        // /sdcard 整个读不了，旧流程会直接解压失败并只吐一句英文 Permission denied。
+        String blocker = LinuxLauncher.preImportBlocker(this);
+        if (blocker != null) {
+            LinuxLauncher.trace("launch blocked: " + blocker);
+            com.termux.shared.interact.MessageDialogUtils.showMessage(
+                    TermuxActivity.this, "需要先授权", blocker,
+                    "去授权",
+                    (d, w) -> LinuxLauncher.openStorageSettings(TermuxActivity.this),
+                    "稍后", null, null);
+            return;
+        }
         // Otherwise prepare rootfs + start a fresh Linux session (off the UI thread).
         new Thread(() -> {
             final LinuxLauncher.LaunchPlan plan = LinuxLauncher.prepare(TermuxActivity.this);
@@ -837,11 +849,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             // su 实测要起进程，放到子线程：主线程直接调会在授权弹窗时卡死界面（ANR）
             new Thread(() -> {
                 final boolean toRoot = LinuxLauncher.isNonRootMode();
+                // v42：每次点切换都重新实测，不吃上次的否定缓存
+                // （以前在 KernelSU 授权完回来仍提示「没有 root」，只能杀 App）
+                if (toRoot) LinuxLauncher.invalidateRootCache();
                 final boolean canRoot = toRoot ? LinuxLauncher.isSuAvailable() : true;
                 runOnUiThread(() -> {
                     btn.setEnabled(true);
                     if (!canRoot) {
-                        Logger.showToast(this, "此设备没有可用的 root，无法切换到 root 模式", true);
+                        Logger.showToast(this, "没有检测到可用的 root。若你刚在 KernelSU 里授权过，"
+                                + "请确认授权的是当前这个 App（重装后 UID 会变，旧授权会失效），"
+                                + "然后重新点一次切换", true);
                         return;
                     }
                     String mode = LinuxLauncher.toggleMode();

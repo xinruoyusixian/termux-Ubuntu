@@ -14,7 +14,10 @@ TH=/data/data/com.termux/files/home
 FD=/data/data/com.termux/files
 # App uid 动态获取：每台设备/每次重装都可能不同，禁止写死（10183 只是历史值）。
 # 解析顺序：files 目录属主 → 数据目录属主 → pm 输出的 uid: 字段
-APP_UID=$(stat -c %u "$FD" 2>/dev/null)
+# v42: 优先读 App 落盘的 .app-uid（Process.myUid()）。App 自己最清楚自己的 uid，
+# 比外面 stat/pm 反推可靠，也不受「卸载重装换 uid」影响。
+APP_UID=$(tr -dc '0-9' < "$FD/.app-uid" 2>/dev/null)
+[ -n "$APP_UID" ] || APP_UID=$(stat -c %u "$FD" 2>/dev/null)
 [ -n "$APP_UID" ] || APP_UID=$(stat -c %u /data/data/com.termux 2>/dev/null)
 [ -n "$APP_UID" ] || APP_UID=$(pm list packages -U com.termux 2>/dev/null | sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' | head -1)
 if [ -z "$APP_UID" ]; then

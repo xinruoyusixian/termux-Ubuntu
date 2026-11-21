@@ -1,0 +1,7 @@
+# assets 里的脚本会被 Android 的 toybox sh 直接执行，换行必须是 LF。
+# 若被写成 CRLF，会报 "syntax error: unmatched 'if'"、变量尾带 \r 导致路径错乱。
+*.sh text eol=lf
+*.pa text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.java text eol=lf
