@@ -18,6 +18,7 @@
 ├── termux-x11-master/        X11 参考源码（仅参考，无需单独安装）
 └── tools/                    打包与部署辅助脚本
     ├── clean_rootfs.sh            发布前清理：删 Chrome profile/历史/缓存（保证发布包无个人信息）
+    ├── unlock-pad.sh              一键解锁平板（自动唤醒/找密码框/输密码/重试，测试用）
     ├── pack_rootfs_on_device.sh   安卓设备上打包发布 rootfs（卸载挂载 + 排除运行时目录）
     ├── push_v36_api.py / upload_asset.py  GitHub API 推送源码 / 上传 Release 资源
     ├── pack_rootfs.py / pack_termux_pkgs.py / extract_debs.py / fetch_*.sh
