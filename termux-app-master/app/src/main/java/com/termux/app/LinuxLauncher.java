@@ -170,6 +170,16 @@ public final class LinuxLauncher {
         return new File(FORCE_NOROOT_FLAG).exists();
     }
 
+    /**
+     * 确保 root 版全量清理脚本已落地（v39）。
+     * prepare() 只在 root 分支复制它，但「从非 root 切到 root」时旧会话是非 root，
+     * 磁盘上可能没有这份脚本，导致模式切换重启时无脚本可跑。菜单在重启前统一调一次。
+     */
+    public static void ensureRootCleanupScript(Context ctx) {
+        try { copyAssetIfNeeded(ctx, "linux-cleanup.sh", CLEANUP_SCRIPT); }
+        catch (Exception e) { Log.w(TAG, "ensureRootCleanupScript failed: " + e.getMessage()); }
+    }
+
     /** 切换运行模式：返回切换后的模式描述（"非 root（proot）" / "root（chroot）"） */
     public static String toggleMode() {
         File flag = new File(FORCE_NOROOT_FLAG);
@@ -739,6 +749,17 @@ public final class LinuxLauncher {
         // 1) su binary visible to the app process —— 必须实测能用才算 root。
         //    以前只看文件存在，KernelSU 装了但 su 被删/没授权时仍判有 root，
         //    随后 chroot 命令报 "No su program found on this device..."。
+        // v39: 优先复用 isSuAvailable() 已实测确认的 su 路径。
+        // 切换模式按钮先调 isSuAvailable()（写 sWorkingSuPath），随后 restartDesktop
+        // 又调 hasRoot()——过去两处各用各的缓存（sWorkingSuPath vs sSuManagerVerified），
+        // 切换瞬间可能一个说能root、一个说不能，导致按旧模式重启。这里统一：
+        // 一旦 isSuAvailable 已验证过某个 su 路径，hasRoot 直接采信，保持同一进程内一致。
+        String working = sWorkingSuPath;
+        if (working != null && verifySuWorks(working)) {
+            // 只采信本次实测结果，不写 sSuManagerVerified：
+            // 那份缓存按进程生命周期长期复用，su 授权被撤销后会陈旧误判。
+            return true;
+        }
         String[] suPaths = {"/system/bin/su", "/system/xbin/su", "/sbin/su",
                 "/su/bin/su", "/data/adb/ksu/bin/su", "/data/magisk/su"};
         for (String p : suPaths) {

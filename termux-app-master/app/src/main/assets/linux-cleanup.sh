@@ -49,6 +49,26 @@ for p in /proc/[0-9]*; do
 done
 sleep 1
 
+# v39 模式切换残留修复：
+# root 会话里若 PulseAudio 被 root 身份起过一次，$FILES/home/.pulse-rt 会变成 root:root。
+# 切到非 root（proot）后 App uid 无法写这个目录，PulseAudio 直接 EACCES（表现为完全无声）。
+# 本脚本以 root 运行，按 App 数据目录的属主删掉重建，保证两个方向的切换后都归 App uid。
+APP_UID=$(stat -c %u "$FILES" 2>/dev/null)
+APP_GID=$(stat -c %g "$FILES" 2>/dev/null)
+[ -n "$APP_GID" ] || APP_GID="$APP_UID"
+PULSE_RT="$FILES/home/.pulse-rt"
+if [ -n "$APP_UID" ] && [ -e "$PULSE_RT" ]; then
+    rm -rf "$PULSE_RT" 2>/dev/null
+    mkdir -p "$PULSE_RT" 2>/dev/null
+    chown "$APP_UID:$APP_GID" "$PULSE_RT" 2>/dev/null
+fi
+# 同理：root 目标用 su 跑启动脚本时，新写的 log 文件会变成 root 属主；
+# 下次切回非 root 后 App uid 无法重定向。清理阶段统一把日志目录归给 App。
+LOG_DIR="$FILES/log"
+if [ -n "$APP_UID" ] && [ -d "$LOG_DIR" ]; then
+    chown -R "$APP_UID:$APP_GID" "$LOG_DIR" 2>/dev/null
+fi
+
 # 卸载。同一个挂载会以 /data/data、/data/user/0、/data_mirror 三种别名出现在
 # /proc/mounts 里，只有其中一个路径能真正 umount，另外两个返回 Invalid argument。
 #

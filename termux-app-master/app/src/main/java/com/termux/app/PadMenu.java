@@ -26,6 +26,9 @@ public final class PadMenu {
     private static final String TERMUX_ACTIVITY = "com.termux.app.TermuxActivity";
     private static final String FILES_DIR = "/data/data/com.termux/files";
     private static final String START_SCRIPT = FILES_DIR + "/start-xfce.sh";
+    // root 版全量清理脚本：按命令行通杀所有模式的桌面进程并卸载 chroot 挂载。
+    // 用于模式切换重启时彻底停掉旧桌面（含从 root 切走时 App 杀不掉的 root 进程）。
+    private static final String CLEANUP_SCRIPT_ROOT = FILES_DIR + "/linux-cleanup.sh";
     private static final String AUDIO_SCRIPT = FILES_DIR + "/home/start-audio.sh";
 
     private PadMenu() {}
@@ -44,7 +47,8 @@ public final class PadMenu {
 
     /** 只把桌面栈拉起来（幂等：已在运行会直接跳过），不切换界面 */
     public static void startDesktopStack(Context ctx) {
-        if (LinuxLauncher.hasRoot(ctx)) {
+        // v39: 用标记（用户选择的模式）而非带缓存的 hasRoot，避免切换后拉起旧模式桌面
+        if (!LinuxLauncher.isNonRootMode()) {
             runSu(ctx, "rm -f " + FILES_DIR + "/.session-closing; "
                     + "sh " + START_SCRIPT + " >" + FILES_DIR + "/log/desktop-start.log 2>&1", "桌面已拉起");
         } else {
@@ -142,33 +146,89 @@ public final class PadMenu {
         }, "stop-desktop").start();
     }
 
-    /** 重启整个系统：先彻底关闭 X server / 桌面 / 音频，再重新拉起全套 */
+    /**
+     * 重启整个系统：先彻底关闭旧桌面（不管它运行在哪种模式），再按当前选择的模式拉起。
+     *
+     * 关键（v39 修复「切了模式重启不生效」）：
+     * - 目标模式只认 .force-noroot 标记（isNonRootMode），这是菜单切换写入的真相源。
+     *   绝不能用 hasRoot()：它带进程级 su 探测缓存，切换瞬间缓存可能与标记不一致，
+     *   导致按旧模式重启 → 用户看到「切了 root 但重启还是 proot」，只有杀 App 清缓存才生效。
+     * - 清理必须用「能杀掉旧模式进程」的权限：从 root 切到非 root 时，旧桌面是 root 进程，
+     *   App 身份（runSh）杀不掉。所以只要设备有 su，就一律用 su 跑 root 版全量清理脚本
+     *   （linux-cleanup.sh 按命令行通杀 X server/XFCE/proot，并卸载 chroot 挂载）。
+     * - 启动阶段按目标模式选身份：非 root 必须 App 身份（脚本以 App uid 运行，用 su 跑会
+     *   造成 root 属主污染）；root 用 su。清理与启动拼在同一条命令里串行执行，先清完再起。
+     */
     public static void restartDesktop(Context ctx) {
         toast(ctx, "正在重启 Ubuntu 系统…");
-        // 注意 1：X server 是 app_process 起的，/proc/<pid>/comm 是 "main"，
-        //         pkill -x termux-x11 永远匹配不到，必须按命令行匹配。
-        // 注意 2：不能用 pkill -f termux-x11：这条命令行本身就含 "termux-x11"，
-        //         会把执行它的 shell 自己一起杀掉。用 [t] 括号技巧规避。
-        // 注意 3：必须先确认进程真的退出了再删 socket，否则删掉 socket 而 server 还活着，
-        //         会出现"X server 未启动"却连不上的死局。
-        String kill = "for i in 1 2 3 4 5 6; do "
-                + "  p=$(pgrep -f '[t]ermux-x11'); "
-                + "  [ -z \"$p\" ] && break; "
-                + "  kill -9 $p 2>/dev/null; sleep 1; "
-                + "done;";
-        String cmd = "rm -f " + FILES_DIR + "/.session-closing; " + kill
-                + " pkill -x xfce4-session 2>/dev/null; pkill -x startxfce4 2>/dev/null; "
-                + "rm -f " + FILES_DIR + "/ubuntu/tmp/.X0-lock " + FILES_DIR + "/ubuntu/tmp/.X11-unix/X0; "
-                + "sleep 1; sh " + START_SCRIPT;
-        if (LinuxLauncher.hasRoot(ctx)) {
-            runSu(ctx, cmd, "系统已重启");
+        // v39: isSuAvailable() 会实测 su（授权弹窗时最多等 5s×多路径），
+        // 不能在 UI 线程调用，否则有 ANR 风险。整段重启准备放到后台线程。
+        new Thread(() -> doRestartDesktop(ctx), "restart-desktop").start();
+    }
+
+    private static void doRestartDesktop(Context ctx) {
+        // 确保 root 版清理脚本存在（非 root 会话里可能没落地）
+        LinuxLauncher.ensureRootCleanupScript(ctx);
+
+        final boolean targetNonRoot = LinuxLauncher.isNonRootMode();
+        final boolean hasSu = LinuxLauncher.isSuAvailable();
+
+        // 清理：有 su 就用 root 版全量清理（通杀任何模式的旧桌面）；否则 App 版清理。
+        // 两个清理脚本都自带 X server socket 删除，且按命令行匹配（规避 self-match 自杀）。
+        String cleanup;
+        if (hasSu) {
+            cleanup = "sh " + CLEANUP_SCRIPT_ROOT;
         } else {
-            // 非 root：直接跑非 root 清理脚本（会连 X server 一起停），再整套拉起
-            runSh(ctx, "rm -f " + FILES_DIR + "/.session-closing; "
-                    + "mkdir -p " + FILES_DIR + "/log; "
-                    + "sh " + LinuxLauncher.NOROOT_CLEANUP_SCRIPT + " >/dev/null 2>&1; "
-                    + "sleep 1; sh " + LinuxLauncher.NOROOT_START_SCRIPT
-                    + " >" + FILES_DIR + "/log/desktop-start.log 2>&1", "桌面已重启");
+            cleanup = "sh " + LinuxLauncher.NOROOT_CLEANUP_SCRIPT;
+        }
+
+        String startCmd = targetNonRoot
+                ? "sh " + LinuxLauncher.NOROOT_START_SCRIPT
+                : "sh " + START_SCRIPT;
+        String full = "rm -f " + FILES_DIR + "/.session-closing; mkdir -p " + FILES_DIR + "/log; "
+                + cleanup + " >/dev/null 2>&1; sleep 1; "
+                + startCmd + " >" + FILES_DIR + "/log/desktop-start.log 2>&1";
+
+        // 清理阶段需要 root 权限（杀 root 旧桌面/卸载挂载），所以整条命令用 su 跑；
+        // 但若目标是「非 root」，用 su 跑启动脚本会造成 root 属主污染 —— 因此拆成两段：
+        // ① su 清理（等待完成） ② 按目标模式用正确身份启动。
+        if (targetNonRoot) {
+            // 非 root 目标：su 只负责清理，完成后用 App 身份启动 proot 桌面。
+            if (hasSu) {
+                final String rootCleanup = "rm -f " + FILES_DIR + "/.session-closing; mkdir -p "
+                        + FILES_DIR + "/log; sh " + CLEANUP_SCRIPT_ROOT + " >/dev/null 2>&1";
+                new Thread(() -> {
+                    try {
+                        Process p = Runtime.getRuntime().exec(
+                                new String[]{LinuxLauncher.suBinary(), "-c", rootCleanup});
+                        // 必须等清理真正结束再启动：否则旧的 root XFCE/X server 还占着 :0，
+                        // 新的 proot 桌面起不来——正是「切换后重启不生效」的竞态。
+                        boolean done = p.waitFor(120, java.util.concurrent.TimeUnit.SECONDS);
+                        if (!done) {
+                            p.destroyForcibly();
+                            toast(ctx, "清理超时，已取消启动，请重试");
+                            return;
+                        }
+                        int code = p.exitValue();
+                        if (code != 0) {
+                            toast(ctx, "清理失败（exit " + code + "），已取消启动");
+                            return;
+                        }
+                    } catch (Exception e) {
+                        toast(ctx, "清理异常：" + e.getMessage());
+                        return;
+                    }
+                    // 清理完成后，App 身份启动非 root 桌面
+                    runSh(ctx, "rm -f " + FILES_DIR + "/.session-closing; mkdir -p " + FILES_DIR + "/log; "
+                            + "sh " + LinuxLauncher.NOROOT_START_SCRIPT
+                            + " >" + FILES_DIR + "/log/desktop-start.log 2>&1", "桌面已重启（非 root）");
+                }, "restart-nonroot").start();
+            } else {
+                runSh(ctx, full, "桌面已重启（非 root）");
+            }
+        } else {
+            // root 目标：清理 + 启动都用 su（root 桌面本来就是 su/chroot 起的）
+            runSu(ctx, full, "系统已重启（root）");
         }
     }
 

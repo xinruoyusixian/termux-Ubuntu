@@ -2,7 +2,7 @@
 
 在安卓平板上运行的 Ubuntu 24.04 XFCE 桌面。基于 Termux App 源码二次开发，**X11 显示层与悬浮菜单已编译进同一个 APK**，支持 **root（chroot）/ 非 root（proot）双模式**，可一键启动完整 Ubuntu 桌面，终端与桌面双向切换。支持整系统备份/恢复，uid 跨设备自适应。
 
-![版本](https://img.shields.io/badge/版本-v38-blue) ![平台](https://img.shields.io/badge/平台-Android%20arm64-green) ![模式](https://img.shields.io/badge/模式-chroot%20%2F%20proot-orange) ![默认](https://img.shields.io/badge/默认-非root-green)
+![版本](https://img.shields.io/badge/版本-v39-blue) ![平台](https://img.shields.io/badge/平台-Android%20arm64-green) ![模式](https://img.shields.io/badge/模式-chroot%20%2F%20proot-orange) ![默认](https://img.shields.io/badge/默认-非root-green)
 
 ## 目录结构
 
@@ -20,26 +20,26 @@
     ├── clean_rootfs.sh            发布前清理：删 Chrome profile/历史/缓存（保证发布包无个人信息）
     ├── unlock-pad.sh              一键解锁平板（自动唤醒/找密码框/输密码/重试，测试用）
     ├── pack_rootfs_on_device.sh   安卓设备上打包发布 rootfs（卸载挂载 + 排除运行时目录）
-    ├── push_v36_api.py / upload_asset.py  GitHub API 推送源码 / 上传 Release 资源
+    ├── push_v3x_api.py / upload_asset.py  GitHub API 推送源码 / 上传 Release 资源
     ├── pack_rootfs.py / pack_termux_pkgs.py / extract_debs.py / fetch_*.sh
     └── enter-ubuntu.sh / 进入Ubuntu.bat   手动进入 Ubuntu
 ```
 
 ## 下载
 
-资源包体积大，不进 git，统一发布在 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v38)：
+资源包体积大，不进 git，统一发布在 [Releases](https://github.com/xinruoyusixian/termux-Ubuntu/releases/tag/v39)：
 
 | 文件 | 说明 | 大小 |
 |------|------|------|
-| `Ubuntu-XFCE-Tablet-v38.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
-| `Ubuntu-XFCE-rootfs-v38.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（**v38 修复版**：内置桌面图标/默认浏览器/输入法入口，已清理个人信息） | 816MB |
-| `Ubuntu-XFCE-source-v38.tar.gz` | v38 修复版源码（源码+文档+工具，排除构建产物与 .git） | 89MB |
+| `Ubuntu-XFCE-Tablet-v39.apk` | 平板版 App（含 X11 显示层，装这一个即可） | 48MB |
+| `Ubuntu-XFCE-rootfs-v39.tar.gz` | Ubuntu XFCE 系统包，首次启动导入用（内置桌面图标/默认浏览器/输入法入口，已清理个人信息） | 816MB |
+| `Ubuntu-XFCE-source-v39.tar.gz` | v39 源码（源码+文档+工具，排除构建产物与 .git） | 89MB |
 | `termux-pkgs.tar.gz` | Termux 基础包，非 root（proot）运行环境 | 11MB |
 | `termux-app-0.118.3-arm64.apk` | 原版 Termux，初始化用 | 9MB |
 
 > **不需要单独安装 Termux:X11**：显示层（Lorie）已内置在 APK 里。`Termux-X11.apk` 仅在配合原版 Termux 时才需要。
 >
-> v38 是完整修复版：APK 侧修复 root 模式浏览器/输入法缺失与非 root（proot）桌面黑屏；系统包同步重新打包（内置修复后的桌面入口、已清理隐私），源码包含全部改动与踩坑记录。三者配套使用。
+> v39 在 v38 双模式修复基础上，修复「切换 root/非 root 模式后点立即重启仍按旧模式启动、必须杀 App 才生效」的问题：重启目标模式只读用户选择的标记，清理用 root 权限通杀旧桌面，启动时按目标模式选正确身份；同时修复切换后 `.pulse-rt` 残留 root 属主导致无声。三者（APK/rootfs/source）配套使用。
 
 ## 功能特性
 
@@ -56,9 +56,9 @@
 
 ## 快速开始
 
-1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v38.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v38.apk`，一个包即可）
-2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v38.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
-3. 默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权）
+1. 从 Releases 下载并安装 **`Ubuntu-XFCE-Tablet-v39.apk`**（本地保存名为 `Ubuntu-XFCE-平板版-v39.apk`，一个包即可）
+2. 首次启动按提示导入 `Ubuntu-XFCE-rootfs-v39.tar.gz`（放到 `/sdcard/UbuntuXFCE/rootfs.tar.gz` 后打开 App）
+3. 默认进入非 root 模式；如需 root，在终端抽屉点「模式：非ROOT」切换（设备需有可用 su，且已给 com.termux 授权），弹窗点「立即重启」即可按新模式启动，无需杀 App
 4. 需要访问下载目录：点「挂载下载」→ 去系统设置开启「允许访问所有文件」→ 返回自动完成
 5. 备份/恢复：终端抽屉或 X11 面板都有「备份系统」「恢复备份」两个按钮
 
@@ -75,7 +75,7 @@
 # 需要 JDK 17（含 javac）、Android SDK
 export JAVA_HOME=<jdk路径>
 cd termux-app-master
-./gradlew :app:assembleRelease -PappVersionName=0.118.0-v38
+./gradlew :app:assembleRelease -PappVersionName=0.118.0-v39
 # 产物: app/build/outputs/apk/release/termux-app_apt-android-7-release_universal.apk
 ```
 
@@ -97,6 +97,7 @@ cd termux-app-master
 | v36 | 默认非 root + 终端菜单模式切换 + 非 root 挂载下载 + 整系统备份/恢复 + Termux 全菜单汉化 + root 实测加固（防卡死/多路径） |
 | **v37** | **修复恢复功能四处致命 bug（su 位置参数、选包列表深色主题空白、桌面运行时 umount 护栏误拦、无 root 时 rm -rf 删残系统）+ 脚本不再依赖 /dev/null + 版本号与升级覆盖修复** |
 | **v38** | **修复 root 模式桌面缺浏览器/输入法（启动幂等补桌面图标、默认浏览器、fcitx5 自启）+ 修复非 root（proot）桌面黑屏（APK 路径不依赖 pm、SELinux MLS 标签对齐、日志属主/目录加固、X server 失败快速报错）；双模式真机验证通过** |
+| **v39** | **修复模式切换后「立即重启」仍按旧模式启动（目标模式只读 `.force-noroot` 标记、清理用 root 通杀旧桌面、启动按目标模式选 App/su 身份、统一 su 探测缓存）+ 修复切换后 `.pulse-rt` 残留 root 属主导致无声；双向切换真机验证通过** |
 
 ## 重要文档
 
@@ -104,4 +105,5 @@ cd termux-app-master
 - 遇到问题先看 **[docs/踩坑记录/00-总览与铁律.md](docs/踩坑记录/00-总览与铁律.md)** —— 代价最大的几条铁律（SELinux 穿透、pkill 自杀等）
 - v37 新增 **[docs/踩坑记录/11-备份恢复与发布流程.md](docs/踩坑记录/11-备份恢复与发布流程.md)** —— su 传参、/dev/null、选包 UI、lazy umount 等
 - v38 新增 **[docs/踩坑记录/12-v38桌面黑屏与入口丢失.md](docs/踩坑记录/12-v38桌面黑屏与入口丢失.md)** —— pm path 失败、SELinux MLS 标签、日志属主挡重定向
+- v39 新增 **[docs/踩坑记录/13-模式切换重启不生效.md](docs/踩坑记录/13-模式切换重启不生效.md)** —— su 双缓存、目标模式真相源、清理/启动身份分离、pulse-rt 属主残留
 - 源码改了什么、怎么构建见 **[docs/源码改动说明.md](docs/源码改动说明.md)**
